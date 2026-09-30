@@ -125,7 +125,8 @@ label.check input{ width: 18px; height: 18px; min-height: 0; }
 .brand.big .logo{ width: 44px; height: 44px; }
 .trip-pick{ flex: 1; max-width: 360px; margin-left: auto; }
 .trip-pick select{ font-weight: 600; min-height: 38px; padding: 7px 10px; background: var(--surface); }
-.top-actions{ display: flex; gap: 2px; }
+.top-actions{ display: flex; gap: 2px; align-items: center; }
+#ai-switch{ margin-right: 4px; }
 #sync-btn[data-state="busy"] .ic{ animation: spin 1s linear infinite; }
 #sync-btn[data-state="ok"]{ color: var(--good); }
 #sync-btn[data-state="error"]{ color: var(--bad); }

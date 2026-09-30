@@ -301,6 +301,7 @@ function shell(){
         <a class="brand" href="#trips">${logo()}<span><b>Trip</b> Vault</span></a>
         <label class="trip-pick"><span class="sr">Trip</span><select id="trip-pick" aria-label="Current trip"></select></label>
         <div class="top-actions">
+          <span id="ai-switch"></span>
           <button class="icon-btn" id="sync-btn" data-state="off" aria-label="Sync now">${icon('sync')}</button>
           <button class="icon-btn" id="settings-btn" aria-label="Settings">${icon('gear')}</button>
         </div>
@@ -313,6 +314,7 @@ function shell(){
   <div class="modal" id="modal" hidden><div class="modal-card" id="modal-card" role="dialog" aria-modal="true"></div></div>
   <div class="viewer" id="viewer" hidden></div>
   <div class="toast" id="toast" role="status"></div>`;
+  if(typeof MoneyAI !== 'undefined' && MoneyAI.widget) MoneyAI.widget($('ai-switch'));      // which AI answers, and switching it
   $('sync-btn').onclick = ()=>Cloud.syncConfig() ? autoSync(true) : openSettings('sync');
   $('settings-btn').onclick = ()=>openSettings();
   $('trip-pick').onchange = e=>{ if(e.target.value === '__new') { e.target.value = S.settings.lastTrip || ''; VIEWS.newTrip(); } else setTrip(e.target.value); };
