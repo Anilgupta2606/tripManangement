@@ -108,7 +108,7 @@ VIEWS.plan = function(main, cur){
     const sk = Rules.skeleton({city: c.city, start: c.start, end: c.end, hotel: c.hotel, arrival: c.arrival, departure: c.departure}, c.rules);
     storePlan(cur, c, sk.days, 'Built-in layout', 'Laid out the fixed parts');
   };
-  $('p-ai').onclick = ()=>{ const c = readSetup(ctx); if(c) aiPlan(cur, c, ''); };
+  $('p-ai').onclick = ()=>{ const c = readSetup(ctx); if(c) aiPlan(cur, c, '', $('p-ai')); };
   if($('p-del')) $('p-del').onclick = async ()=>{
     if(!(await confirmBox('Delete this plan?', 'Every day of the ' + planState.city + ' plan goes, with what was asked of the AI. You can plan it again from scratch.', 'Delete'))) return;
     delete S.plans[key]; S.deleted[key] = Date.now();
@@ -116,8 +116,8 @@ VIEWS.plan = function(main, cur){
   };
   if(!plan) { loadWeather(cur, ctx); return; }
   loadWeather(cur, ctx);
-  if($('p-fix')) $('p-fix').onclick = ()=>{ const c = readSetup(ctx); if(c) aiPlan(cur, c, 'Fix these rule problems: ' + problems.filter(p=>p.level !== 'info').map(p=>p.text).join(' | ')); };
-  $('p-send').onclick = ()=>{ const t = $('p-issue').value.trim(); if(!t) return $('p-issue').focus(); const c = readSetup(ctx); if(c) aiPlan(cur, c, t); };
+  if($('p-fix')) $('p-fix').onclick = ()=>{ const c = readSetup(ctx); if(c) aiPlan(cur, c, 'Fix these rule problems: ' + problems.filter(p=>p.level !== 'info').map(p=>p.text).join(' | '), $('p-fix')); };
+  $('p-send').onclick = ()=>{ const t = $('p-issue').value.trim(); if(!t) return $('p-issue').focus(); const c = readSetup(ctx); if(c) aiPlan(cur, c, t, $('p-send')); };
   $('p-undo').onclick = ()=>{ const v = plan.versions.pop(); if(v){ plan.days = v.days; touch(plan); save(); render(); toast('Undone.'); } };
   $('p-copy').onclick = ()=>{ navigator.clipboard.writeText(planText(plan, ctx)).then(()=>toast('Copied — paste it anywhere.')); };
   main.querySelectorAll('[data-goto]').forEach(li=>li.onclick = ()=>{ const el = document.querySelector(`[data-day="${li.dataset.goto}"]`); if(el) el.scrollIntoView({behavior: 'smooth', block: 'start'}); });
@@ -166,20 +166,25 @@ Include every date from start to end. Include flights, transfers, hotel check-in
 You are given what the internet says about the place: travel-guide listings with opening hours and prices, notable places near the hotel with their distance, the weather forecast and the news. Prefer those real places, keep to their listed hours and put far-apart places on different days. If you can search the web, check current opening hours, closures, festivals and events on the travel dates, and say in the notes what you found.
 THE RULES (follow all of them):
 ${rules}`;
-async function aiPlan(trip, c, issue){
+async function aiPlan(trip, c, issue, clicked){
   if(planState.busy){ planState.ctl && planState.ctl.abort(); return; }
   const key = planKey(trip.id, c.city);
   const prev = S.plans[key];
   const st = $('p-status');
   const btns = ['p-ai', 'p-send', 'p-fix'].map($).filter(Boolean);
   planState.busy = true; planState.ctl = new AbortController();
-  btns.forEach(b=>{ b.dataset.label = b.innerHTML; });
-  const btn = issue ? ($('p-send') || $('p-fix')) : $('p-ai');
-  if(btn) btn.innerHTML = '<span class="spinner"></span> Planning… (tap to stop)';
+  btns.forEach(b=>{ b.dataset.label = b.innerHTML; if(b !== clicked) b.disabled = true; });
+  const btn = clicked || (issue ? $('p-send') : $('p-ai'));
+  if(btn) btn.innerHTML = '<span class="spinner"></span> Working… (tap to stop)';
   if(st) st.textContent = '';
+  // who will answer: shown while it works
+  const web0 = planState.web && Cloud.canSearch() && !Cloud.resting('gemini');
+  const first = (Cloud.aiStatus().find(x=>!x.resting) || {}).name || 'the AI';
+  const who = web0 ? 'Google Gemini' : first;
+  Busy.start(issue && /^Fix these/.test(issue) ? 'Fixing the rule breaks with AI' : issue ? 'Changing the plan as you asked' : prev ? 'Re-planning with AI' : 'Planning with AI', ()=>planState.ctl && planState.ctl.abort());
   try{
     // what the internet says about the place, for the AI to plan with
-    const say = t => { const e = $('p-status'); if(e) e.textContent = t; };
+    const say = t => { const e = $('p-status'); if(e) e.textContent = t; if(t) Busy.step(t); };
     say('Reading about ' + c.city + ' on the internet…');
     const know = await Knowledge.gather(c.city, c.country, c.hotel).catch(()=>null);
     const used = (know ? know.used : []).slice();
@@ -203,7 +208,7 @@ async function aiPlan(trip, c, issue){
       (issue ? `\n\nThe traveller asks: "${issue}"\nChange the plan to do this, following the rules.` : '')}];
     // with a Gemini key the AI also searches the web (opening hours, closures, events on the dates); else it plans from the facts above
     const web = planState.web && Cloud.canSearch();
-    say(web ? 'The AI is planning and searching the web…' : 'The AI is planning…');
+    say(web ? `${who} is planning and searching the web — usually under a minute…` : `${who} is planning${/Ollama/.test(who) ? ' on this computer — this can take a few minutes' : ' — usually under a minute'}…`);
     let r;
     try{ r = await Cloud.chat(PLAN_SYSTEM(Rules.asPrompt(c.rules, {issues: !!issue})), turns, web ? {search: true, searchOptional: true} : {}, planState.ctl.signal); }
     catch(e){
@@ -212,7 +217,8 @@ async function aiPlan(trip, c, issue){
       r = await Cloud.chat(PLAN_SYSTEM(Rules.asPrompt(c.rules, {issues: !!issue})), turns, {}, planState.ctl.signal);
     }
     if(r.sources && r.sources.length) used.push('web search (' + r.sources.length + ' sources)');
-    say('');
+    say('Checking the plan against your rules…');
+    Busy.step('');
     const j = Cloud.json(r.text);
     const clean = Rules.clean(j, prev);
     if(!clean.days.length) throw new Error('The AI returned an empty plan. Try again.');
@@ -222,10 +228,13 @@ async function aiPlan(trip, c, issue){
     storePlan(trip, c, days, r.provider + ' · ' + r.model, issue ? issue : (prev ? 'Re-planned with AI' : 'Planned with AI') + (j.summary ? ': ' + j.summary : ''),
       {sources: (r.sources || []).slice(0, 15).concat(know && know.guide ? [{title: 'Wikivoyage: ' + know.guide.title, url: know.guide.url}] : []), used});
     const probs = Rules.check({days}, c.rules, Object.assign({}, c, {weather: LOCAL_WEATHER[key]}));
-    toast(j.summary ? j.summary : 'Plan updated.' + (probs.some(p=>p.level === 'error') ? ' Some rules still break — see the checker.' : ''));
+    const left = probs.filter(p=>p.level === 'error').length;
+    Busy.done((issue ? 'Plan changed' : 'Plan ready') + ' — by ' + r.provider + (left ? ' · ' + left + ' rule break' + (left === 1 ? '' : 's') + ' left, see the checker' : ' · follows the rules'));
+    if(j.summary) toast(j.summary);
   }catch(e){
-    if(e && e.code !== 'cancelled' && e.message) toast(e.message, 'error');
-    btns.forEach(b=>{ if(b.dataset.label) b.innerHTML = b.dataset.label; });
+    if(e && e.code === 'cancelled') Busy.done('Stopped — the plan is unchanged', true);
+    else if(e && e.message) Busy.done(e.message, true);
+    btns.forEach(b=>{ if(b.dataset.label) b.innerHTML = b.dataset.label; b.disabled = false; });
   }finally{ planState.busy = false; planState.ctl = null; }
 }
 

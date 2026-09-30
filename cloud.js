@@ -374,7 +374,10 @@ const Cloud = (function(){
       return g.sort((a, b)=>{ const x = score(a), y = score(b); for(let i = 0; i < x.length; i++) if(x[i] !== y[i]) return x[i] - y[i]; return a.localeCompare(b); });
     }
     if(id === 'anthropic'){ const t = m => /haiku/.test(m) ? (fast ? 0 : 1) : /sonnet/.test(m) ? (fast ? 1 : 0) : 2; return uniq.filter(m=>/^claude/.test(m) && !/opus/.test(m)).sort((a, b)=>t(a) - t(b) || b.localeCompare(a)); }
-    if(id === 'ollama') return uniq.sort((a, b)=>fast ? (sizeB(a) || 99) - (sizeB(b) || 99) : (sizeB(b) || 0) - (sizeB(a) || 0));
+    // a model on this computer: the smallest good one first (a laptop runs a 4B model in seconds, an 8B one in minutes)
+    if(id === 'ollama'){ const LOCAL = ['gemma3:4b', 'llama3.2:3b', 'qwen2.5:3b', 'phi4-mini', 'qwen3:4b', 'gemma3:1b'];
+      const li = m => { const i = LOCAL.findIndex(x=>m.toLowerCase().indexOf(x) === 0); return i < 0 ? LOCAL.length : i; };
+      return uniq.sort((a, b)=>li(a) - li(b) || (sizeB(a) || 99) - (sizeB(b) || 99)); }
     let list = uniq;
     if(id === 'openrouter') list = uniq.filter(m=>/:free$/.test(m) || m === 'openrouter/free');
     const ranked = list.filter(m=>m !== 'openrouter/free').sort(fast
@@ -439,7 +442,7 @@ const Cloud = (function(){
       if(r){ skipped.push(PROVIDERS.find(p=>p.id === id).name + ' is resting (' + r.why + ')'); continue; }
       const key = s.keys[id];
       const pinned = s.model[id] && s.model[id] !== 'auto' ? [s.model[id]] : [];
-      const last = (working[id] || {})[tier];
+      const last = id === 'ollama' ? null : (working[id] || {})[tier];     // on this computer: always the light model first, not the one that last answered
       const models = Array.from(new Set(pinned.concat(last ? [last] : [], await bestModels(id, key, tier), PROVIDERS.find(p=>p.id === id).models)))
         .filter(m=>pinned.indexOf(m) >= 0 || !isBad(id, m)).slice(0, 5);
       for(const model of models){

@@ -396,6 +396,35 @@ function render(){
   catch(e){ console.error(e); main.innerHTML = `<div class="card error">Something went wrong drawing this tab: ${esc(e.message)}</div>`; }
 }
 
+/* ---------------------------------------------------------------- "the AI is working": a panel that stays in view
+   Busy.start(title, onStop) · Busy.step(text) · Busy.done(text, error) */
+const Busy = (function(){
+  let el = null, timer = null, t0 = 0;
+  function start(title, onStop){
+    stop();
+    el = document.createElement('div');
+    el.className = 'busy'; el.setAttribute('role', 'status'); el.setAttribute('aria-live', 'polite');
+    el.innerHTML = `<span class="spinner"></span><div class="busy-text"><b>${esc(title)}</b><span class="busy-step"></span></div><span class="busy-time">0 s</span>${onStop ? '<button class="btn ghost small busy-stop">Stop</button>' : ''}`;
+    document.body.appendChild(el);
+    if(onStop) el.querySelector('.busy-stop').onclick = onStop;
+    t0 = Date.now();
+    timer = setInterval(()=>{ const s = Math.round((Date.now() - t0) / 1000); el.querySelector('.busy-time').textContent = s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s'; }, 1000);
+  }
+  const step = t => { if(el) el.querySelector('.busy-step').textContent = t; };
+  function done(text, error){
+    if(!el) return;
+    clearInterval(timer);
+    const secs = Math.round((Date.now() - t0) / 1000);
+    el.classList.add(error ? 'bad' : 'ok');
+    el.innerHTML = `<span class="busy-mark">${error ? '!' : '✓'}</span><div class="busy-text"><b>${esc(text)}</b>${error ? '' : `<span class="busy-step">in ${secs < 60 ? secs + ' s' : Math.floor(secs / 60) + ' min ' + (secs % 60) + ' s'}</span>`}</div><button class="btn ghost small busy-stop">Close</button>`;
+    const mine = el; mine.querySelector('.busy-stop').onclick = ()=>mine.remove();
+    setTimeout(()=>{ if(mine.isConnected) mine.remove(); }, error ? 12000 : 5000);
+    el = null;
+  }
+  function stop(){ clearInterval(timer); if(el) el.remove(); el = null; }
+  return {start, step, done, stop};
+})();
+
 /* ---------------------------------------------------------------- modal */
 function openModal(html, opts){
   $('modal-card').className = 'modal-card' + (opts && opts.wide ? ' wide' : '');

@@ -54,3 +54,10 @@ test('a web search that is optional: Gemini at its free limit, so Groq answers',
   // a search that is required still says what is missing
   await assert.rejects(C.chat('flight', [{role: 'user', content: '6E1461'}], {search: true}), /resting|Gemini/);
 });
+
+test('a model on this computer: the light one first, for every kind of task', ()=>{
+  const names = ['qwen3:8b', 'gemma3:4b', 'qwen3:4b', 'llama3.1:8b'];
+  assert.equal(C.rankModels('ollama', names, 'smart')[0], 'gemma3:4b');
+  assert.equal(C.rankModels('ollama', names, 'fast')[0], 'gemma3:4b');
+  assert.equal(C.rankModels('ollama', ['qwen3:8b', 'llama3.1:8b', 'phi3:3.8b'], 'smart')[0], 'phi3:3.8b');
+});
