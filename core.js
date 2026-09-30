@@ -34,6 +34,7 @@ function toast(msg, kind){
 }
 function icon(name){
   const P = {
+    bag: '<path d="M5 8h14l-1 13H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>',
     plane: '<path d="M2 16l20-8-20-8 4 8-4 8z" transform="rotate(-30 12 8) translate(0 4)"/>',
     doc: '<path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/>',
     map: '<path d="M9 3L3 6v15l6-3 6 3 6-3V3l-6 3z"/><path d="M9 3v15M15 6v15"/>',
@@ -90,7 +91,7 @@ const Store = (function(){
   };
 })();
 
-const EMPTY = () => ({v: 1, people: [], trips: [], docs: [], plans: {}, memories: [], flightsExtra: [], deleted: {}, checks: {},
+const EMPTY = () => ({v: 1, people: [], trips: [], docs: [], plans: {}, memories: [], flightsExtra: [], shopping: [], deleted: {}, checks: {},
   settings: {readerMode: 'builtin-ai', flightKeys: {}, rules: {}, lastTrip: ''}});
 let S = EMPTY();
 /* What syncs (everything but this device's keys and caches). */
@@ -122,7 +123,7 @@ function remove(listName, id){
 function mergeData(mine, theirs){
   const out = JSON.parse(JSON.stringify(mine));
   out.deleted = Object.assign({}, theirs.deleted || {}, mine.deleted || {});
-  ['people', 'trips', 'docs', 'memories', 'flightsExtra'].forEach(k=>{
+  ['people', 'trips', 'docs', 'memories', 'flightsExtra', 'shopping'].forEach(k=>{
     const by = {};
     (theirs[k] || []).concat(mine[k] || []).forEach(x=>{ if(!by[x.id] || (x.updatedAt || 0) >= (by[x.id].updatedAt || 0)) by[x.id] = x; });
     out[k] = Object.values(by).filter(x=>!out.deleted[x.id] || (x.updatedAt || 0) > out.deleted[x.id]);
@@ -327,6 +328,7 @@ const TABS = [
   {id: 'plan', label: 'Itinerary', icon: 'map'},
   {id: 'news', label: 'News', icon: 'news'},
   {id: 'flights', label: 'Flights', icon: 'plane'},
+  {id: 'shop', label: 'Shopping', icon: 'bag'},
   {id: 'memories', label: 'Memories', icon: 'photo'},
 ];
 const VIEWS = {};
@@ -359,7 +361,7 @@ function shell(){
         <a class="brand" href="#trips">${logo()}<span><b>Trip</b> Vault</span></a>
         <label class="trip-pick"><span class="sr">Trip</span><select id="trip-pick" aria-label="Current trip"></select></label>
         <div class="top-actions">
-          <a class="icon-btn home-link" href="/" title="Money Home — all your apps" aria-label="Money Home — all your apps">${icon('apps')}</a>
+          <a class="home-link" href="/" title="Money Home — all your apps">${icon('apps')}<span>Money Home</span></a>
           <span id="ai-switch"></span>
           <button class="icon-btn" id="sync-btn" data-state="off" aria-label="Sync now">${icon('sync')}</button>
           <button class="icon-btn" id="settings-btn" aria-label="Settings">${icon('gear')}</button>

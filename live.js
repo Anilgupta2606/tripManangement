@@ -95,11 +95,11 @@ VIEWS.flights = function(main, cur){
   const upcoming = all.filter(f=>!f.date || f.date >= Rules.addDays(todayISO(), -1));
   const past = all.filter(f=>f.date && f.date < Rules.addDays(todayISO(), -1));
   const fk = S.settings.flightKeys || {};
-  const hasSource = fk.aerodatabox || fk.airlabs || Cloud.canSearch();
+  const hasSource = true;                // far-off flights: the free route check; near ones: AirLabs / AeroDataBox / AI
   main.innerHTML = `
   <section class="section-head"><div><h1>${esc(cur ? cur.name : 'All flights')}</h1></div>
     <div class="row"><button class="btn primary" id="fl-all" ${upcoming.length && hasSource ? '' : 'disabled'}>${icon('refresh')} Check all</button><button class="btn soft" id="fl-add">${icon('plus')} Add a flight</button></div></section>
-  ${!hasSource ? `<section class="card notice"><b>Live status needs one free key.</b> Add an AeroDataBox or AirLabs key, or a Google Gemini key (AI searches the web) in <a href="#" id="fl-keys">Settings → Flight status</a>. The links on each flight work without one.</section>` : ''}
+  ${!(fk.airlabs || fk.aerodatabox) ? `<section class="card notice"><b>For live status (delays, gates, cancellations) add a free AirLabs key</b> in <a href="#" id="fl-keys">Settings → Flight status</a>. Without it, flights more than 2 days away still get a free route check, and nearer ones are looked up by the AI.</section>` : ''}
   <section class="flight-list">${upcoming.map(flightCard).join('') || `<div class="card muted">No upcoming flights${cur ? ' in this trip' : ''}. Upload a ticket or boarding pass, or add a flight by number.</div>`}</section>
   ${past.length ? `<details class="past"><summary>Past flights (${past.length})</summary><section class="flight-list">${past.map(flightCard).join('')}</section></details>` : ''}
   <p class="muted small">Flights leaving within 36 hours are re-checked every 10 minutes while this tab is open.</p>`;
@@ -112,8 +112,9 @@ VIEWS.flights = function(main, cur){
   main.querySelectorAll('[data-del-flight]').forEach(b=>b.onclick = ()=>{ remove('flightsExtra', b.dataset.delFlight); save(); render(); });
   // auto-check: flights soon, not checked in the last 10 minutes
   clearInterval(flightTimer);
-  const due = () => hasSource && upcoming.filter(f=>{ const h = hoursUntil(f); const st = LOCAL.flightStatus[f.key]; return h > -6 && h < 36 && (!st || Date.now() - st.at > 10 * 60000); });
+  const due = () => upcoming.filter(f=>{ const h = hoursUntil(f); const st = LOCAL.flightStatus[f.key]; return h > -6 && h < 36 && (!st || Date.now() - st.at > 10 * 60000); });
   const tick = async () => { if(tab !== 'flights'){ clearInterval(flightTimer); return; } for(const f of due() || []) await checkFlight(f, true); };
+  upcoming.filter(f=>f.date && hoursUntil(f) >= 36 && (!LOCAL.flightStatus[f.key] || LOCAL.flightStatus[f.key].error || LOCAL.flightStatus[f.key].approximate)).forEach(f=>checkFlight(f, true));
   flightTimer = setInterval(tick, 60000);
   tick();
 };
@@ -139,7 +140,7 @@ function flightCard(f){
       <div class="right"><div class="iata">${esc(f.to || '???')}</div><div class="muted small">${esc(to ? to.city : '')}</div><div>${t(arr.scheduled || f.arr, arr.estimated, arr.actual)}</div>${arr.belt ? `<div class="small">Belt ${esc(arr.belt)}</div>` : ''}</div>
     </div>
     ${(f.travellers || []).length ? `<p class="small fl-people">${icon('user')} ${f.travellers.length > 1 ? f.travellers.length + ' travellers: ' : ''}${esc(travellersText(f))}</p>` : ''}
-    ${st && st.note ? `<p class="small">${esc(st.note)}</p>` : ''}
+    ${st && st.note ? `<p class="small${st.routeMismatch ? ' err' : ''}">${esc(st.note)}</p>` : ''}
     ${st && st.error ? `<p class="small err">${esc(st.error)}</p>` : ''}
     <div class="fl-foot small">
       <span class="muted">${st ? esc(st.source || '') + ' · ' + esc(ago(st.at)) + (st.approximate ? ' · from web search, confirm with the airline' : '') : ''}</span>

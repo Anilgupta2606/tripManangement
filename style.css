@@ -519,3 +519,32 @@ fieldset.types p{ flex-basis: 100%; margin: 0; }
 @media (max-width: 760px){ .busy{ bottom: 84px; } }
 .checker details.fixes{margin-top:10px}
 .checker details.fixes ul{margin:6px 0 0}
+
+/* Shopping: one card per place */
+.shop-grid{ display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }
+.shop h2{ margin: 0; font: 700 19px var(--f-display); }
+.shop-head p{ margin: 2px 0 0; }
+.shop-add{ display: grid; grid-template-columns: 1fr 64px 110px auto; gap: 6px; margin: 12px 0 6px; }
+.shop-add input{ min-width: 0; }
+.shop-list{ list-style: none; margin: 0; padding: 0; }
+.shop-item{ display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 8px; padding: 9px 0; border-top: 1px solid var(--border); }
+.shop-item .tick{ display: flex; align-items: center; gap: 10px; font-size: 15px; cursor: pointer; }
+.shop-item .tick input{ width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+.shop-item .meta{ grid-column: 1; padding-left: 30px; }
+.shop-item .meta:empty{ display: none; }
+.shop-item .acts{ grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 2px; }
+.shop-item.done .tick span{ text-decoration: line-through; color: var(--muted); }
+.shop-list .empty{ padding: 8px 0; }
+.shop-where{ margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 8px; }
+.shop-where li{ margin: 6px 0; }
+@media (max-width: 640px){
+  .shop-grid{ grid-template-columns: 1fr; }
+  .shop-add{ grid-template-columns: 1fr 56px; }
+  .shop-add .who{ grid-column: 1; }
+}
+
+/* the way back to Money Home (the start page of all the apps) */
+.home-link{ display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--ink-2); font: 600 13.5px var(--f-body); text-decoration: none; white-space: nowrap; }
+.home-link:hover{ color: var(--ink); border-color: var(--border-strong); }
+.home-link svg{ width: 16px; height: 16px; }
+@media (max-width: 720px){ .home-link{ width: 38px; padding: 0; justify-content: center; } .home-link span{ display: none; } }

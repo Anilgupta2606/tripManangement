@@ -460,25 +460,54 @@ Use "unknown" if you cannot find information for that exact date; "scheduled" if
     return Object.assign({state: 'unknown', delayMin: 0, dep: {}, arr: {}}, j, {source: 'AI web search (' + r.provider + ')', sources: r.sources || [], at: Date.now(), approximate: true});
   }
 
-  /* keys: {aerodatabox, airlabs} -> tries them in that order, then Gemini search. */
+  /* The route a flight number flies, from adsbdb (free, no key): {airline, from, to} or null */
+  const routeCache = {};
+  async function route(flight){
+    if(routeCache[flight] !== undefined) return routeCache[flight];
+    try{
+      const res = await fetch('https://api.adsbdb.com/v0/callsign/' + encodeURIComponent(flight));
+      const d = res.ok ? await res.json() : null;
+      const r = d && d.response && d.response.flightroute;
+      return routeCache[flight] = r ? {airline: (r.airline || {}).name || '', from: (r.origin || {}).iata_code || '', to: (r.destination || {}).iata_code || '',
+        fromCity: (r.origin || {}).municipality || '', toCity: (r.destination || {}).municipality || ''} : null;
+    }catch(e){ return null; }
+  }
+  /* Far ahead: no service has live data yet, so check the route (no key, no AI) and say when live status starts. */
+  async function scheduled(flight, date, seg, days){
+    const r = await route(flight);
+    const on = 'Live status starts about 2 days before (in ' + Math.max(1, Math.round(days - 2)) + ' days).';
+    if(!r) return {state: 'scheduled', dep: {}, arr: {}, note: 'Not checked live yet. ' + on, source: 'route check', at: Date.now()};
+    const want = seg && seg.from && seg.to ? seg.from + ' → ' + seg.to : '';
+    const got = r.from + ' → ' + r.to;
+    const match = !want || want === got;
+    return {state: match ? 'scheduled' : 'unknown', dep: {airport: r.from}, arr: {airport: r.to}, airline: r.airline, routeMismatch: !match,
+      note: match ? `${flight} flies ${got}${r.airline ? ' (' + r.airline + ')' : ''}${want ? ' — matches your ticket' : ''}. ${on}`
+        : `Check the flight number: ${flight} usually flies ${got}${r.airline ? ' (' + r.airline + ')' : ''}, but your ticket says ${want}.`,
+      source: 'route check (adsbdb)', at: Date.now()};
+  }
+  /* keys: {aerodatabox, airlabs}. More than 2 days ahead: the route check. Within 2 days: AirLabs, AeroDataBox,
+     then (only if neither answers) the AI searching the web. */
   async function status(flight, date, keys, seg){
     const errors = [];
-    const today = new Date().toISOString().slice(0, 10);
-    if(keys.aerodatabox){ try{ return await aerodatabox(keys.aerodatabox, flight, date); }catch(e){ errors.push(e.message); } }
-    if(keys.airlabs && Math.abs(Date.parse(date) - Date.parse(today)) <= 2 * 86400000){
+    const days = (Date.parse(date + 'T' + ((seg && seg.dep) || '12:00') + ':00') - Date.now()) / 86400000;
+    if(days > 2) return scheduled(flight, date, seg, days);
+    if(keys.airlabs){
       try{ const r = await airlabs(keys.airlabs, flight); if(r.state !== 'unknown' && (!r.date || r.date === date)) return r; errors.push(r.note || 'AirLabs: not tracked yet'); }catch(e){ errors.push(e.message); }
     }
-    if(Cloud.canSearch()){ try{ const r = await ai(flight, date, seg); r.errors = errors; return r; }catch(e){ errors.push(e.message); } }
-    const e = new Error(errors.length ? errors.join(' · ') : 'Add a free flight-status key (AeroDataBox or AirLabs) or a Gemini key in Settings.');
-    e.noSource = !errors.length;
-    throw e;
+    if(keys.aerodatabox){ try{ return await aerodatabox(keys.aerodatabox, flight, date); }catch(e){ errors.push(e.message); } }
+    if(Cloud.canSearch()){ try{ const r = await ai(flight, date, seg); r.errors = errors; return r; }catch(e){ errors.push('AI search: ' + e.message.replace(/^No AI service could answer: /, '')); } }
+    // nothing live: still say what the route check knows
+    const r = await scheduled(flight, date, seg, 2);
+    r.state = 'unknown';
+    r.note = (errors.length ? 'No live status right now (' + errors.join(' · ') + '). ' : 'No live status source: add a free AirLabs key in Settings → Flight status. ') + (r.routeMismatch ? r.note : '');
+    return r;
   }
   const links = (flight, date) => ({
     flightaware: 'https://www.flightaware.com/live/flight/' + encodeURIComponent(flight),
     fr24: 'https://www.flightradar24.com/data/flights/' + encodeURIComponent(flight.toLowerCase()),
     google: 'https://www.google.com/search?q=' + encodeURIComponent(flight + ' flight status ' + (date || '')),
   });
-  return {status, links, aerodatabox, airlabs};
+  return {status, links, aerodatabox, airlabs, route};
 })();
 
 /* ================================================================ Knowledge: what the internet says about a place,
