@@ -472,3 +472,19 @@ fieldset.types p{ flex-basis: 100%; margin: 0; }
   .ck-act{ grid-column: 2; }
   .inline-add input{ width: 150px; }
 }
+
+/* ---------- personal documents */
+.doc-group{ display: grid; gap: 10px; }
+.doc-group h2{ margin: 6px 0 0; }
+.renew{ border-left: 5px solid var(--warn); }
+.renew-list{ list-style: none; margin: 0; padding: 0; }
+.renew-list li{ display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); }
+.renew-list li:first-child{ border-top: 0; }
+.bad-text{ color: var(--bad); }
+.local-only{ margin-top: 4px; }
+.type-chip.t-aadhaar, .type-chip.t-pan, .type-chip.t-licence, .type-chip.t-voter-id, .type-chip.t-passport{ color: var(--t-doc); }
+.type-chip.t-tax, .type-chip.t-bank, .type-chip.t-investment, .type-chip.t-insurance{ color: var(--t-hotel); }
+.type-chip.t-property, .type-chip.t-vehicle, .type-chip.t-medical, .type-chip.t-education, .type-chip.t-employment, .type-chip.t-bill{ color: var(--t-train); }
+@media (max-width: 760px){ .renew-list li{ grid-template-columns: 1fr auto; } .renew-list li > span:nth-child(2){ grid-column: 1; font-size: 13px; } .renew-list li .btn{ grid-column: 2; grid-row: 1 / span 2; } }
+
+.plan-how{ flex: 1; min-width: 220px; max-width: 520px; }

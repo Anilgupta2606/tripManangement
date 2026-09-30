@@ -7,7 +7,11 @@
    ========================================================= */
 
 const checkState = {view: 'list'};
-const docRules = () => S.settings.docRules || Rules.DOC_RULES.map(r=>Object.assign({}, r));
+const docRules = () => (S.settings.docRules || Rules.DOC_RULES).map(r=>{
+  r = Object.assign({}, r);
+  if(r.id === 'photo-id' && (r.types || []).join() === 'passport') r.types = ['aadhaar', 'pan', 'licence', 'voter-id', 'passport'];   // saved before the ID categories
+  return r;
+});
 function saveDocRules(list){ S.settings.docRules = list; save(); }
 const tripChecks = id => { S.checks = S.checks || {}; return S.checks[id] || (S.checks[id] = {ticks: {}, custom: []}); };
 const STATUS = {done: ['✓', 'Ready'], ticked: ['✓', 'Ticked'], expiring: ['!', 'Check validity'], missing: ['', 'Missing']};

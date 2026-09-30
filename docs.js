@@ -3,7 +3,11 @@
    TRIPS, DOCUMENTS, VIEWER, MEMORIES
    ========================================================= */
 
-const TYPE_ICON = {'boarding-pass': '🎫', flight: '✈️', hotel: '🏨', train: '🚆', bus: '🚌', visa: '🛂', passport: '🪪', insurance: '🛡️', car: '🚕', activity: '🎟️', other: '📄'};
+const TYPE_ICON = {'boarding-pass': '🎫', flight: '✈️', hotel: '🏨', train: '🚆', bus: '🚌', visa: '🛂', passport: '📘', insurance: '🛡️', car: '🚕', activity: '🎟️',
+  aadhaar: '🪪', pan: '💳', licence: '🚗', 'voter-id': '🗳️', tax: '🧾', bank: '🏦', investment: '📈', property: '🏠', vehicle: '🚙', medical: '🩺', education: '🎓', employment: '💼', bill: '📑', other: '📄'};
+/* The category picker, in groups: Travel, Identity, Money and tax, Home health and work, Other. */
+const typeOptions = sel => Parse.GROUPS.map(g=>`<optgroup label="${esc(g.label)}">${g.types.map(k=>`<option value="${k}"${k === sel ? ' selected' : ''}>${TYPE_ICON[k] || ''} ${esc(typeLabel(k))}</option>`).join('')}</optgroup>`).join('');
+const groupOf = t => (Parse.GROUPS.find(g=>g.types.indexOf(t) >= 0) || {id: 'other', label: 'Other'});
 const typeLabel = t => Parse.TYPE_LABEL[t] || 'Other';
 
 /* ================================================================ Trips */
@@ -160,33 +164,49 @@ function timeline(t){
 }
 
 /* ================================================================ Documents */
-const docFilter = {q: '', person: '', type: '', trip: 'current'};
+const docFilter = {q: '', person: '', type: '', trip: 'current', kind: 'travel'};
 VIEWS.docs = function(main, cur){
+  keepQueueEdits();                                    // the review cards' unsaved edits, before the page is drawn again
+  const kind = docFilter.kind;                         // travel | personal | all
   const tripSel = docFilter.trip === 'current' ? (cur ? cur.id : '') : docFilter.trip;
-  let list = S.docs.filter(d=>(!tripSel || (tripSel === 'none' ? !d.tripId : d.tripId === tripSel)) && (!docFilter.person || d.person === docFilter.person) && (!docFilter.type || d.type === docFilter.type));
-  if(docFilter.q){ const q = docFilter.q.toLowerCase(); list = list.filter(d=>(d.title + ' ' + d.person + ' ' + JSON.stringify(d.fields) + ' ' + (d.fileName || '')).toLowerCase().indexOf(q) >= 0); }
+  let list = S.docs.filter(d=>(kind === 'all' || (kind === 'travel') === Parse.isTravel(d.type) || (kind === 'travel' && d.tripId))
+    && (kind === 'personal' || !tripSel || (tripSel === 'none' ? !d.tripId : d.tripId === tripSel))
+    && (!docFilter.person || d.person === docFilter.person) && (!docFilter.type || d.type === docFilter.type));
+  if(docFilter.q){ const q = docFilter.q.toLowerCase(); list = list.filter(d=>(d.title + ' ' + d.person + ' ' + typeLabel(d.type) + ' ' + JSON.stringify(d.fields) + ' ' + (d.fileName || '')).toLowerCase().indexOf(q) >= 0); }
   list.sort((a, b)=>(Parse.span(a).start || '9').localeCompare(Parse.span(b).start || '9') || (b.addedAt || 0) - (a.addedAt || 0));
   const people = Array.from(new Set(S.people.map(p=>p.name).concat(S.docs.map(d=>d.person).filter(Boolean))));
+  // anything that runs out within 3 months (or already has): passports, licences, insurance, visas…
+  const soon = Rules.addDays(todayISO(), 90);
+  const renew = S.docs.filter(d=>d.fields && d.fields.validUntil && d.fields.validUntil <= soon).sort((a, b)=>a.fields.validUntil.localeCompare(b.fields.validUntil));
+  const byGroup = kind === 'travel' ? null : Parse.GROUPS.map(g=>({g, docs: list.filter(d=>groupOf(d.type).id === g.id)})).filter(x=>x.docs.length);
+  const seg = ['travel', 'personal', 'all'].map(k=>`<button role="tab" data-kind="${k}" class="${kind === k ? 'on' : ''}" aria-selected="${kind === k}">${k === 'travel' ? '✈️ Travel' : k === 'personal' ? '🗂️ Personal' : 'All'}</button>`).join('');
   main.innerHTML = `
+  <section class="section-head"><h1>Documents</h1><div class="seg" role="tablist" aria-label="Which documents">${seg}</div></section>
   <section class="drop" id="drop">
     <input type="file" id="file-in" accept="application/pdf,image/*,.pdf,.jpg,.jpeg,.png,.heic,.webp" multiple hidden>
     <input type="file" id="cam-in" accept="image/*" capture="environment" hidden>
     <div class="drop-ic">${icon('upload')}</div>
-    <div><b>Upload tickets, boarding passes, hotel bookings, visas…</b><div class="muted small">PDF or photo · drop files here, or</div></div>
+    <div><b>${kind === 'personal' ? 'Upload Aadhaar, PAN, passport, licence, tax papers, statements, policies, bills…' : 'Upload tickets, boarding passes, hotel bookings, visas — or any personal document'}</b>
+      <div class="muted small">PDF or photo · the reader works out what it is; you can change the category</div></div>
     <div class="row"><button class="btn primary" id="pick">${icon('doc')} Choose files</button><button class="btn soft" id="cam">${icon('camera')} Take a photo</button></div>
   </section>
   <div id="queue"></div>
+  ${kind !== 'travel' && renew.length ? `<section class="card renew"><h2>Renew soon</h2><ul class="renew-list">${renew.map(d=>{ const n = daysUntil(d.fields.validUntil);
+      return `<li><span>${TYPE_ICON[d.type] || '📄'} <b>${esc(typeLabel(d.type))}</b> — ${esc(d.person || 'whose?')}</span><span class="${n < 0 ? 'bad-text' : 'warn-text'}">${n < 0 ? 'expired ' + esc(fmtDate(d.fields.validUntil)) : 'expires ' + esc(fmtDate(d.fields.validUntil)) + ' · in ' + n + ' days'}</span><button class="btn ghost small" data-open-doc="${esc(d.id)}">View</button></li>`; }).join('')}</ul></section>` : ''}
   <section class="filters">
-    <input type="search" id="f-q" placeholder="Search PNR, name, hotel, flight…" value="${esc(docFilter.q)}">
-    <select id="f-trip"><option value="current">${cur ? esc(cur.name) : 'Current trip'}</option><option value="">All trips</option><option value="none">Not in a trip</option>${S.trips.filter(t=>!cur || t.id !== cur.id).map(t=>`<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select>
+    <input type="search" id="f-q" placeholder="${kind === 'personal' ? 'Search name, number, category…' : 'Search PNR, name, hotel, flight…'}" value="${esc(docFilter.q)}">
+    ${kind === 'personal' ? '' : `<select id="f-trip"><option value="current">${cur ? esc(cur.name) : 'Current trip'}</option><option value="">All trips</option><option value="none">Not in a trip</option>${S.trips.filter(t=>!cur || t.id !== cur.id).map(t=>`<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select>`}
     <select id="f-person"><option value="">Everyone</option>${people.map(p=>`<option>${esc(p)}</option>`).join('')}</select>
-    <select id="f-type"><option value="">All types</option>${Object.entries(Parse.TYPE_LABEL).map(([k, v])=>`<option value="${k}">${esc(v)}</option>`).join('')}</select>
+    <select id="f-type"><option value="">All categories</option>${typeOptions(docFilter.type)}</select>
   </section>
-  <section class="doc-grid">${list.map(docCard).join('') || `<p class="muted empty">No documents here yet.</p>`}</section>`;
-  $('f-trip').value = docFilter.trip; $('f-person').value = docFilter.person; $('f-type').value = docFilter.type;
-  const refilter = ()=>{ docFilter.q = $('f-q').value; docFilter.trip = $('f-trip').value; docFilter.person = $('f-person').value; docFilter.type = $('f-type').value; const pos = $('f-q').selectionStart; VIEWS.docs(main, cur); if(document.activeElement !== $('f-q') && docFilter.q){ $('f-q').focus(); $('f-q').setSelectionRange(pos, pos); } };
+  ${byGroup ? (byGroup.map(x=>`<section class="doc-group"><h2>${esc(x.g.label)} <span class="muted small">${x.docs.length}</span></h2><div class="doc-grid">${x.docs.map(docCard).join('')}</div></section>`).join('') || '<p class="muted empty">No documents here yet.</p>')
+    : `<section class="doc-grid">${list.map(docCard).join('') || '<p class="muted empty">No documents here yet.</p>'}</section>`}`;
+  if($('f-trip')) $('f-trip').value = docFilter.trip;
+  $('f-person').value = docFilter.person; $('f-type').value = docFilter.type;
+  const refilter = ()=>{ docFilter.q = $('f-q').value; if($('f-trip')) docFilter.trip = $('f-trip').value; docFilter.person = $('f-person').value; docFilter.type = $('f-type').value; const pos = $('f-q').selectionStart; VIEWS.docs(main, cur); if(document.activeElement !== $('f-q') && docFilter.q){ $('f-q').focus(); $('f-q').setSelectionRange(pos, pos); } };
   $('f-q').oninput = ()=>{ clearTimeout(refilter.t); refilter.t = setTimeout(refilter, 250); };
-  ['f-trip', 'f-person', 'f-type'].forEach(id=>$(id).onchange = refilter);
+  ['f-trip', 'f-person', 'f-type'].forEach(id=>{ if($(id)) $(id).onchange = refilter; });
+  main.querySelectorAll('[data-kind]').forEach(b=>b.onclick = ()=>{ docFilter.kind = b.dataset.kind; docFilter.type = ''; VIEWS.docs(main, cur); });
   $('pick').onclick = ()=>$('file-in').click();
   $('cam').onclick = ()=>$('cam-in').click();
   $('file-in').onchange = e=>{ addFiles(Array.from(e.target.files)); e.target.value = ''; };
@@ -204,12 +224,13 @@ function keyFacts(d){
   if(f.segments && f.segments.length) return f.segments.map(s=>`${s.flight} ${s.from || ''}→${s.to || ''} ${s.date ? fmtDate(s.date) : ''} ${s.dep || ''}${s.seat ? ' · ' + s.seat : ''}`).join('<br>');
   if(d.type === 'hotel') return esc([f.hotelName && f.hotelName !== d.title ? f.hotelName : '', fmtRange(f.checkIn, f.checkOut)].filter(Boolean).join(' · '));
   if(d.type === 'train') return esc([f.trainNo + ' ' + (f.trainName || ''), fmtDate(f.date), f.dep].filter(x=>x && x.trim()).join(' · '));
-  if(f.validUntil) return 'valid until ' + esc(fmtDate(f.validUntil));
+  if(f.validUntil){ const n = daysUntil(f.validUntil); return `<span class="${n < 0 ? 'bad-text' : n < 90 ? 'warn-text' : ''}">${n < 0 ? 'expired' : 'valid until'} ${esc(fmtDate(f.validUntil))}</span>`; }
+  if(f.issuedOn) return 'issued ' + esc(fmtDate(f.issuedOn));
   return '';
 }
 function docCard(d){
   const trip = tripById(d.tripId);
-  const pnr = d.fields.pnr || d.fields.confirmation || d.fields.reference || d.fields.number || '';
+  const pnr = d.fields.pnr || d.fields.confirmation || Parse.mask(d.fields.number, d.type) || d.fields.reference || '';
   return `<article class="doc-card" data-open-doc="${esc(d.id)}" tabindex="0" role="button" aria-label="Open ${esc(d.title)}">
     <div class="doc-thumb">${d.thumb ? `<img src="${d.thumb}" alt="" loading="lazy">` : `<span class="big-ic">${TYPE_ICON[d.type] || '📄'}</span>`}<span class="type-chip t-${esc(d.type)}">${TYPE_ICON[d.type] || ''} ${esc(typeLabel(d.type))}</span></div>
     <div class="doc-body">
@@ -217,7 +238,7 @@ function docCard(d){
       <div class="muted small">${d.person ? icon('user') + ' ' + esc(d.person) : '<span class="warn-text">whose?</span>'}${trip ? ' · ' + esc(trip.name) : ''}</div>
       ${pnr ? `<div class="pnr">${esc(pnr)}</div>` : ''}
       <div class="facts small">${keyFacts(d)}</div>
-      <div class="doc-foot small muted">${d.remote ? '☁︎ synced' : d.tooLarge ? 'on this device only' : Cloud.syncConfig() ? 'waiting to sync' : 'this device'}</div>
+      <div class="doc-foot small muted">${d.localOnly ? '🔒 this device only' : d.remote ? '☁︎ synced' : d.tooLarge ? 'on this device only' : Cloud.syncConfig() ? 'waiting to sync' : 'this device'}</div>
     </div></article>`;
 }
 
@@ -253,9 +274,25 @@ async function runQueue(){
     }
   } finally { queueBusy = false; }
 }
+/* What you typed in each open review card, kept before the cards are drawn again. */
+function keepQueueEdits(){
+  queue.forEach(q=>{
+    const el = $('q-' + q.id);
+    if(q.state !== 'review' || !el || !el.querySelector('[data-k="type"]')) return;
+    const v = readForm(el, q.result.fields);
+    // only what you changed: the rest (whose, trip, title) is worked out again, e.g. a trip made from another file
+    const changed = k => { const i = el.querySelector(`[data-k="${k}"]`); return i && i.value !== (i.dataset.d || ''); };
+    if(changed('person')) q.person = v.person;
+    if(changed('title')) q.title = v.title;
+    if(changed('tripId') && v.tripId !== '__new') q.tripId = v.tripId;
+    q.result.fields = v.fields; q.result.type = v.type;
+    const lo = el.querySelector('[data-k-local]'); if(lo) q.localOnly = lo.checked;
+  });
+}
 function drawQueue(){
   const box = $('queue');
   if(!box) return;
+  keepQueueEdits();
   box.innerHTML = queue.map(q=>`<div class="q-item" id="q-${q.id}"></div>`).join('');
   queue.forEach(drawQueueItem);
 }
@@ -281,13 +318,14 @@ function reviewForm(q){
   const r = q.result, f = r.fields || {};
   const cur = currentTrip();
   const people = S.people.map(p=>p.name);
-  const found = (f.passengers || f.guests || f.people || []).concat(r.person ? [r.person] : []).map(n=>Parse.titleCase(n)).filter(Boolean);
+  const found = [].concat(f.passengers || [], f.guests || [], f.people || [], r.person ? [r.person] : []).map(n=>Parse.titleCase(n)).filter((n, i, a)=>n && a.indexOf(n) === i);
   let person = q.person || '';
   if(!person){ const known = people.find(p=>found.some(n=>n.toLowerCase().indexOf(p.toLowerCase().split(' ')[0]) >= 0)); person = known || found[0] || (people.length === 1 ? people[0] : ''); }
   const allPeople = Array.from(new Set(people.concat(found)));
   const span = Parse.span({type: r.type, fields: f});
   const match = S.trips.map(t=>Object.assign({}, t, tripSpan(t))).find(t=>span.start && t.start && span.start >= Rules.addDays(t.start, -2) && span.start <= Rules.addDays(t.end || t.start, 2));
-  const tripId = q.tripId !== undefined ? q.tripId : (match ? match.id : cur ? cur.id : '');
+  // a personal document belongs to no trip unless you say so
+  const tripId = q.tripId !== undefined ? q.tripId : !Parse.isTravel(r.type) && r.type !== 'insurance' ? '' : (match ? match.id : cur ? cur.id : '');
   const title = q.title || r.title || autoTitle(r.type, f, q.file.name);
   return `<div class="review-head">
       ${q.read.thumb ? `<img class="review-thumb" src="${q.read.thumb}" alt="">` : ''}
@@ -295,12 +333,13 @@ function reviewForm(q){
       <div class="small reader-by">${icon('spark')} Read by ${esc(r.by)}${r.aiError ? ` <span class="warn-text">· AI reader unavailable: ${esc(r.aiError)}</span>` : ''}</div>
       ${r.summary ? `<div class="small">${esc(r.summary)}</div>` : ''}</div></div>
     <div class="grid3">
-      <label>Whose document<input list="people-dl-${q.id}" data-k="person" value="${esc(person)}" placeholder="Name"><datalist id="people-dl-${q.id}">${allPeople.map(p=>`<option value="${esc(p)}">`).join('')}</datalist></label>
-      <label>Type of document<select data-k="type">${Object.entries(Parse.TYPE_LABEL).map(([k, v])=>`<option value="${k}"${k === r.type ? ' selected' : ''}>${TYPE_ICON[k] || ''} ${esc(v)}</option>`).join('')}</select></label>
-      <label>Trip<select data-k="tripId"><option value="">Not in a trip</option>${S.trips.map(t=>`<option value="${esc(t.id)}"${t.id === tripId ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}<option value="__new">+ New trip from this document</option></select></label>
-      <label class="span3">Title<input data-k="title" value="${esc(title)}"></label>
+      <label>Whose document<input list="people-dl-${q.id}" data-k="person" value="${esc(person)}" data-d="${esc(person)}" placeholder="Name"><datalist id="people-dl-${q.id}">${allPeople.map(p=>`<option value="${esc(p)}">`).join('')}</datalist></label>
+      <label>Category <span class="muted small">(change it if it is wrong)</span><select data-k="type">${typeOptions(r.type)}</select></label>
+      <label>Trip <span class="muted small">(optional)</span><select data-k="tripId" data-d="${esc(tripId)}"><option value="">Not in a trip</option>${S.trips.map(t=>`<option value="${esc(t.id)}"${t.id === tripId ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}<option value="__new">+ New trip from this document</option></select></label>
+      <label class="span3">Title<input data-k="title" value="${esc(title)}" data-d="${esc(title)}"></label>
     </div>
     ${fieldsEditor(r.type, f)}
+    <label class="check local-only"><input type="checkbox" data-k-local ${q.localOnly ? 'checked' : ''}> 🔒 Keep on this device only — never synced, not even encrypted</label>
     <div class="row end">
       <button class="btn ghost" data-q-x>Discard</button>
       ${Cloud.aiAvailable() ? `<button class="btn soft" data-q-ai>${icon('spark')} Read again with AI</button>` : ''}
@@ -312,6 +351,7 @@ function autoTitle(type, f, name){
   if(s && s.flight) return `${s.airline || s.flight} ${s.from || ''}→${s.to || ''}${s.date ? ' · ' + fmtDate(s.date) : ''}`.replace(/\s+/g, ' ');
   if(type === 'hotel' && f.hotelName) return f.hotelName + (f.checkIn ? ' · ' + fmtRange(f.checkIn, f.checkOut) : '');
   if(type === 'train' && (f.trainNo || f.trainName)) return `Train ${f.trainNo || ''} ${f.trainName || ''}${f.date ? ' · ' + fmtDate(f.date) : ''}`.replace(/\s+/g, ' ');
+  if(!Parse.isTravel(type) && type !== 'other') return typeLabel(type).replace(/ \(.*\)$/, '') + (f.reference ? ' · ' + f.reference : '');
   return typeLabel(type) + ' · ' + String(name || '').replace(/\.[a-z0-9]+$/i, '');
 }
 const FIELD_SETS = {
@@ -322,10 +362,23 @@ const FIELD_SETS = {
   bus: [['reference', 'Ticket / PNR'], ['date', 'Date', '', 'date'], ['fromStation', 'From'], ['toStation', 'To'], ['dep', 'Departs', '', 'time'], ['arr', 'Arrives', '', 'time']],
   visa: [['number', 'Visa number'], ['validUntil', 'Valid until', '', 'date'], ['reference', 'Reference']],
   passport: [['number', 'Number'], ['validUntil', 'Expires', '', 'date']],
-  insurance: [['reference', 'Policy no.'], ['validUntil', 'Valid until', '', 'date'], ['phone', 'Emergency phone']],
+  insurance: [['number', 'Policy no.'], ['reference', 'Insurer / plan'], ['validUntil', 'Valid until', '', 'date'], ['phone', 'Helpline']],
   car: [['reference', 'Booking ref'], ['date', 'Date', '', 'date'], ['dep', 'Pick-up time', '', 'time'], ['address', 'Pick-up place', 'span2']],
   activity: [['reference', 'Booking ref'], ['date', 'Date', '', 'date'], ['dep', 'Time', '', 'time'], ['address', 'Place', 'span2']],
   other: [['reference', 'Reference'], ['date', 'Date', '', 'date']],
+  aadhaar: [['number', 'Aadhaar number'], ['issuedOn', 'Issued', '', 'date']],
+  pan: [['number', 'PAN']],
+  licence: [['number', 'Licence number'], ['issuedOn', 'Issued', '', 'date'], ['validUntil', 'Valid until', '', 'date']],
+  'voter-id': [['number', 'EPIC number']],
+  tax: [['reference', 'Assessment year'], ['number', 'PAN'], ['date', 'Date', '', 'date']],
+  bank: [['number', 'Account no.'], ['reference', 'Bank / period', 'span2']],
+  investment: [['number', 'Folio / account'], ['reference', 'Fund / broker', 'span2'], ['date', 'Date', '', 'date']],
+  property: [['reference', 'Property / address', 'span2'], ['issuedOn', 'From', '', 'date'], ['validUntil', 'Until', '', 'date']],
+  vehicle: [['number', 'Registration no.'], ['reference', 'Vehicle'], ['issuedOn', 'Registered', '', 'date'], ['validUntil', 'Valid until (PUC / fitness)', '', 'date']],
+  medical: [['reference', 'Hospital / doctor', 'span2'], ['date', 'Date', '', 'date']],
+  education: [['reference', 'Institution / course', 'span2'], ['date', 'Date', '', 'date']],
+  employment: [['reference', 'Employer / month', 'span2'], ['date', 'Date', '', 'date']],
+  bill: [['reference', 'Seller / invoice no.', 'span2'], ['date', 'Date', '', 'date'], ['validUntil', 'Warranty until', '', 'date']],
 };
 function fieldsEditor(type, f){
   const set = FIELD_SETS[type] || FIELD_SETS.other;
@@ -346,7 +399,7 @@ function fieldsEditor(type, f){
       `<button class="btn ghost small" data-seg-add>${icon('plus')} Add a flight</button></div>`;
   }
   const names = (f.passengers || f.guests || []);
-  html += `<label>Travellers on this document<input data-f="passengers" value="${esc(names.join(', '))}" placeholder="Names, comma separated"></label>`;
+  if(Parse.isTravel(type) || type === 'insurance') html += `<label>${type === 'insurance' ? 'People covered' : 'Travellers on this document'}<input data-f="passengers" value="${esc(names.join(', '))}" placeholder="Names, comma separated"></label>`;
   html += `<label>Notes<input data-f="notes" value="${esc(f.notes || '')}"></label>`;
   return html;
 }
@@ -355,7 +408,7 @@ function readForm(el, base){
   const g = k => { const i = el.querySelector(`[data-k="${k}"]`); return i ? i.value.trim() : ''; };
   const fields = Object.assign({}, base || {});
   el.querySelectorAll('[data-f]').forEach(i=>{ fields[i.dataset.f] = i.value.trim(); });
-  fields.passengers = String(fields.passengers || '').split(',').map(s=>s.trim()).filter(Boolean);
+  if(typeof fields.passengers === 'string') fields.passengers = fields.passengers.split(',').map(s=>s.trim()).filter(Boolean);   // only where the box is shown
   if(el.querySelector('[data-seg]')){
     fields.segments = Array.from(el.querySelectorAll('[data-seg]')).map(row=>{
       const s = {}, old = (base && base.segments || [])[+row.dataset.seg] || {};
@@ -372,7 +425,7 @@ function readForm(el, base){
 }
 function bindReview(el, q){
   citySuggest(el.querySelector('[data-f="city"]'), el.querySelector('[data-f="country"]'));
-  const keep = ()=>{ const v = readForm(el, q.result.fields); q.person = v.person; q.tripId = v.tripId === '__new' ? q.tripId : v.tripId; q.title = v.title; q.result.fields = v.fields; q.result.type = v.type; };
+  const keep = ()=>{ const v = readForm(el, q.result.fields); q.localOnly = el.querySelector('[data-k-local]').checked; q.person = v.person; q.tripId = v.tripId === '__new' ? q.tripId : v.tripId; q.title = v.title; q.result.fields = v.fields; q.result.type = v.type; };
   el.querySelector('[data-k="type"]').onchange = ()=>{ keep(); drawQueueItem(q); };
   el.querySelectorAll('[data-seg-x]').forEach(b=>b.onclick = ()=>{ keep(); q.result.fields.segments.splice(+b.dataset.segX, 1); drawQueueItem(q); });
   const add = el.querySelector('[data-seg-add]');
@@ -398,7 +451,8 @@ function bindReview(el, q){
       await Store.putFile(fileId, {bytes: q.read.bytes.buffer.slice(q.read.bytes.byteOffset, q.read.bytes.byteOffset + q.read.bytes.byteLength), mime: q.read.mime, name: q.file.name});
       const d = touch({id: uid('d'), tripId, person: v.person, type: v.type, title: v.title || autoTitle(v.type, v.fields, q.file.name), fields: v.fields,
         fileId, fileName: q.file.name, mime: q.read.mime, size: q.read.bytes.byteLength, pages: q.read.pages, thumb: q.read.thumb, password: q.read.password || '',
-        readBy: q.result.by, summary: q.result.summary || '', text: String(q.read.text || '').slice(0, 6000), addedAt: Date.now()});
+        readBy: q.result.by, summary: q.result.summary || '', text: String(q.read.text || '').slice(0, 6000), addedAt: Date.now(),
+        localOnly: el.querySelector('[data-k-local]').checked});
       S.docs.push(d);
       const t = tripById(tripId);
       if(t && !t.city){ const sp = Parse.span(d); if(sp.city){ t.city = sp.city; t.country = t.country || sp.country; touch(t); } }
@@ -495,10 +549,11 @@ function editDoc(d){
   const card = openModal(`<h2>Document details</h2><div class="q-item review" id="edit-doc">
     <div class="grid3">
       <label>Whose document<input list="ppl-dl" data-k="person" value="${esc(d.person)}"><datalist id="ppl-dl">${S.people.map(p=>`<option value="${esc(p.name)}">`).join('')}</datalist></label>
-      <label>Type<select data-k="type">${Object.entries(Parse.TYPE_LABEL).map(([k, v])=>`<option value="${k}"${k === d.type ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select></label>
-      <label>Trip<select data-k="tripId"><option value="">Not in a trip</option>${S.trips.map(t=>`<option value="${esc(t.id)}"${t.id === d.tripId ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select></label>
+      <label>Category<select data-k="type">${typeOptions(d.type)}</select></label>
+      <label>Trip <span class="muted small">(optional)</span><select data-k="tripId"><option value="">Not in a trip</option>${S.trips.map(t=>`<option value="${esc(t.id)}"${t.id === d.tripId ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select></label>
       <label class="span3">Title<input data-k="title" value="${esc(d.title)}"></label>
     </div>${fieldsEditor(d.type, d.fields)}
+    <label class="check local-only"><input type="checkbox" id="ed-local" ${d.localOnly ? 'checked' : ''}> 🔒 Keep on this device only — never synced, not even encrypted</label>
     <div class="row end">${Cloud.aiAvailable() && d.text ? `<button class="btn soft" id="ed-ai">${icon('spark')} Read again with AI</button>` : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="ed-save">Save</button></div></div>`, {wide: true, noFocus: true});
   const el = card.querySelector('#edit-doc');
   citySuggest(el.querySelector('[data-f="city"]'), el.querySelector('[data-f="country"]'));
@@ -519,7 +574,13 @@ function editDoc(d){
   };
   el.querySelector('#ed-save').onclick = ()=>{
     const v = readForm(el, d.fields);
-    Object.assign(d, v); addPerson(v.person); touch(d); save(); closeModal();
+    const local = $('ed-local').checked;
+    if(local && !d.localOnly){
+      // taken off the other devices: its file leaves GitHub, and a note tells the other device to drop it
+      Cloud.deleteFile(d.remote); d.remote = null; S.deleted[d.id] = Date.now();
+    }
+    d.localOnly = local;
+    Object.assign(d, v); addPerson(v.person); touch(d); if(local) d.updatedAt = Date.now() + 1; save(); closeModal();
     if(!$('viewer').hidden) $('v-facts').innerHTML = factsPanel(d);
     render(); toast('Saved.');
   };

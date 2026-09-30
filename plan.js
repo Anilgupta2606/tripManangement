@@ -58,10 +58,9 @@ VIEWS.plan = function(main, cur){
     </div>
     <div class="weather-strip" id="p-weather"></div>
     <div class="row">
-      <button class="btn primary" id="p-ai" ${Cloud.aiAvailable() ? '' : 'disabled title="Add a free AI key in Settings"'}>${icon('spark')} ${plan ? 'Re-plan with AI' : 'Plan with AI'}</button>
-      <button class="btn soft" id="p-skel">${plan ? 'Reset to built-in layout' : 'Lay out the days (no AI)'}</button>
-      ${Cloud.aiAvailable() ? '' : '<span class="muted small">AI planning needs a free key — <a href="#" id="p-key">add one</a>.</span>'}
-      ${Cloud.canSearch() ? `<label class="check small"><input type="checkbox" id="p-web" ${planState.web ? 'checked' : ''}> AI searches the web too</label>` : ''}
+      <button class="btn primary big" id="p-ai" ${Cloud.aiAvailable() ? '' : 'disabled title="Add a free AI key in Setup"'}>${icon('spark')} ${plan ? 'Re-plan with AI' : 'Plan with AI'}</button>
+      <span class="muted small plan-how">${Cloud.aiAvailable() ? 'Reads the city guide, places near your hotel, the weather and news from the internet, then plans every day to your rules.' : 'AI planning needs a free key — <a href="#" id="p-key">add one</a>.'}</span>
+      <button class="linkish small" id="p-skel">${plan ? 'Reset to the plain layout' : 'Or lay out the days without AI'}</button>
       <span class="muted small" id="p-status"></span>
     </div>
   </section>
@@ -95,8 +94,7 @@ VIEWS.plan = function(main, cur){
     onPick: p=>{ planState.countries[p.city.toLowerCase()] = p.country; }});
   ['p-city', 'p-start', 'p-end', 'p-hotel'].forEach(id=>$(id).onchange = reSetup);
   $('p-rules').onclick = ()=>openRules();
-  if($('p-web')) $('p-web').onchange = e=>{ planState.web = e.target.checked; };
-  if($('p-key')) $('p-key').onclick = e=>{ e.preventDefault(); openSettings('ai'); };
+  if($('p-key')) $('p-key').onclick = e=>{ e.preventDefault(); location.href = Cloud.central ? '/setup/#ai' : '#'; if(!Cloud.central) openSettings('ai'); };
   $('p-skel').onclick = async ()=>{
     if(plan && !(await confirmBox('Replace the plan?', 'The current plan is kept in Undo.', 'Replace'))) return;
     const c = readSetup(ctx);

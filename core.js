@@ -41,6 +41,7 @@ function icon(name){
     photo: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M21 17l-5-5-9 9"/>',
     home: '<path d="M3 11l9-7 9 7v9a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1z"/>',
     check: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 13l2 2 4-4"/>',
+    apps: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/>',
     gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/>',
     sync: '<path d="M21 12a9 9 0 01-15.5 6.2M3 12A9 9 0 0118.5 5.8"/><path d="M21 4v5h-5M3 20v-5h5"/>',
     lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/>',
@@ -153,9 +154,13 @@ async function autoSync(manual){
       const ai = Cloud.shareableAi();
       if(Object.keys(ai.keys).length && JSON.stringify(ai) !== JSON.stringify(S.settings.sharedAi || null)){ S.settings.sharedAi = ai; Cloud.markSaved(); await Store.put('state', S); }
     } else if(S.settings.sharedAi){ delete S.settings.sharedAi; Cloud.markSaved(); await Store.put('state', S); }
-    const result = await Cloud.syncNow(()=>S, async data=>{
+    // documents kept on this device only never leave it: not sent, and kept when the other device's data comes in
+    const shared = () => Object.assign({}, S, {docs: S.docs.filter(d=>!d.localOnly)});
+    const result = await Cloud.syncNow(shared, async data=>{
       const keep = S.settings, theirs = data.settings || {};
+      const mineOnly = S.docs.filter(d=>d.localOnly);
       S = Object.assign(EMPTY(), data);
+      S.docs = S.docs.filter(d=>!mineOnly.some(m=>m.id === d.id)).concat(mineOnly);
       // this device's own choices win; keys it does not have come from the other device
       const fk = Object.assign({}, theirs.flightKeys || {});
       Object.entries(keep.flightKeys || {}).forEach(([k, v])=>{ if(v) fk[k] = v; });
@@ -163,7 +168,7 @@ async function autoSync(manual){
       Cloud.takeSyncedAi(theirs.shareKeys === false ? null : theirs.sharedAi);
       await Store.put('state', S);
       render();
-    }, mergeData);
+    }, (mine, theirs)=>mergeData(Object.assign({}, mine, {docs: (mine.docs || []).filter(d=>!d.localOnly)}), theirs));
     setSyncBadge('ok');
     if(result === 'pulled' || result === 'merged'){ render(); if(manual) toast('Brought in the changes from your other device.'); }
     else if(manual) toast(result === 'pushed' ? 'Synced.' : 'Already up to date.');
@@ -174,7 +179,7 @@ async function autoSync(manual){
 }
 /* Documents and photos added here that are not on GitHub yet. */
 async function pushFiles(){
-  const items = S.docs.map(d=>({o: d, fileId: d.fileId})).concat(S.memories.flatMap(m=>(m.photos || []).map(p=>({o: p, fileId: p.fileId}))));
+  const items = S.docs.filter(d=>!d.localOnly).map(d=>({o: d, fileId: d.fileId})).concat(S.memories.flatMap(m=>(m.photos || []).map(p=>({o: p, fileId: p.fileId}))));
   let changed = false;
   for(const it of items){
     if(it.o.remote || it.o.tooLarge || !it.fileId) continue;
@@ -344,6 +349,7 @@ function shell(){
         <a class="brand" href="#trips">${logo()}<span><b>Trip</b> Vault</span></a>
         <label class="trip-pick"><span class="sr">Trip</span><select id="trip-pick" aria-label="Current trip"></select></label>
         <div class="top-actions">
+          <a class="icon-btn home-link" href="/" title="Money Home — all your apps" aria-label="Money Home — all your apps">${icon('apps')}</a>
           <span id="ai-switch"></span>
           <button class="icon-btn" id="sync-btn" data-state="off" aria-label="Sync now">${icon('sync')}</button>
           <button class="icon-btn" id="settings-btn" aria-label="Settings">${icon('gear')}</button>
@@ -493,7 +499,7 @@ function openSettings(section){
       <form id="pw-f" hidden><label>Username<input id="pw-u" autocomplete="username"></label><label>New password<input id="pw-p" type="password" autocomplete="new-password"></label><button class="btn soft">Set sign-in</button></form>
       <label>Theme<select id="theme"><option value="">Match the device</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
       <div class="row"><button class="btn soft" id="backup">${icon('download')} Download a backup (details only)</button><label class="btn soft file-btn">Restore backup<input type="file" id="restore" accept=".json,application/json" hidden></label></div>
-      <div class="row"><button class="btn ghost" id="signout">Sign out</button></div>
+      <div class="row"><a class="btn soft" href="/">${icon('apps')} Money Home — all your apps</a><button class="btn ghost" id="signout">Sign out</button></div>
     </details>
   </div>
   <div class="row end sticky-foot"><button class="btn ghost" data-close>Close</button><button class="btn primary" id="settings-save">Save</button></div>`, {wide: true, noFocus: true});

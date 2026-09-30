@@ -274,7 +274,7 @@ const Rules = (function(){
     {id: 'tickets', name: 'Flight ticket or boarding pass', per: 'traveller', when: 'flights', types: ['flight', 'boarding-pass'], required: true},
     {id: 'hotel', name: 'Hotel booking', per: 'trip', when: 'always', types: ['hotel'], required: true},
     {id: 'insurance', name: 'Travel insurance', per: 'traveller', when: 'international', types: ['insurance'], required: false},
-    {id: 'photo-id', name: 'Photo ID (Aadhaar, PAN or driving licence)', per: 'traveller', when: 'domestic', types: ['passport'], required: true, anyTrip: true},
+    {id: 'photo-id', name: 'Photo ID (Aadhaar, PAN, driving licence or voter ID)', per: 'traveller', when: 'domestic', types: ['aadhaar', 'pan', 'licence', 'voter-id', 'passport'], required: true, anyTrip: true},
     {id: 'forex', name: 'Forex card or local cash', per: 'trip', when: 'international', types: [], required: false},
   ];
   const WHEN = {always: 'Always', international: 'International trips', domestic: 'Trips at home', flights: 'When flying', countries: 'Only these countries'};

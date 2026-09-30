@@ -207,11 +207,11 @@ const Reader = (function(){
    "segments": [{"flight":"6E2134","airline":"IndiGo","from":"DEL","to":"BOM","date":"YYYY-MM-DD","dep":"HH:MM","arr":"HH:MM","terminal":"","gate":"","seat":"","boarding":"HH:MM"}],
    "hotelName":"", "address":"", "city":"", "country":"", "checkIn":"YYYY-MM-DD", "checkOut":"YYYY-MM-DD", "checkInTime":"HH:MM", "checkOutTime":"HH:MM", "confirmation":"", "phone":"", "guests":[names],
    "trainNo":"", "trainName":"", "fromStation":"", "toStation":"", "date":"YYYY-MM-DD", "dep":"HH:MM", "arr":"HH:MM", "coach":"", "berth":"", "class":"",
-   "number":"", "validUntil":"YYYY-MM-DD", "reference":"", "notes":""
+   "number":"the document's own number: Aadhaar, PAN, licence, EPIC, passport, policy, folio, account, vehicle registration", "validUntil":"YYYY-MM-DD (expiry)", "issuedOn":"YYYY-MM-DD", "reference":"", "notes":""
  },
  "summary": one sentence, what this document is and the key facts
 }`;
-  const SYSTEM = `You read travel documents (tickets, boarding passes, hotel bookings, train tickets, visas, insurance) and return the facts as JSON.
+  const SYSTEM = `You read travel documents (tickets, boarding passes, hotel bookings, train tickets, visas) and personal documents (Aadhaar, PAN, passport, driving licence, voter ID, tax papers, bank statements, investment statements, insurance, property and rent papers, vehicle RC and PUC, medical, education, employment, bills and warranties) and return the facts as JSON. Pick the "type" that fits best.
 Answer with the JSON object only, in this shape (leave out fields that do not apply; never invent values; airports as IATA codes; 24-hour times; dates as YYYY-MM-DD):
 ${SCHEMA}`;
   async function aiRead(read, built, opts){

@@ -169,11 +169,37 @@ const Parse = (function(){
     {id:'train', label:'Train ticket', words:[/\birctc\b|\brailways?\b|\btrain\s*(?:no|number|name)/i, 3], more:[/\bcoach\b/i, /\bberth\b/i, /\bquota\b/i, /\bboarding\s*station\b/i, /\bPNR\b/i]},
     {id:'bus', label:'Bus ticket', words:[/\bbus\b|redbus|\bKSRTC\b|\bMSRTC\b|volvo/i, 2], more:[/\bboarding\s*point\b/i, /\bseat\b/i, /\bdrop(?:ping)?\s*point\b/i]},
     {id:'visa', label:'Visa', words:[/\bvisa\b|\be-?visa\b|entry permit/i, 3], more:[/number of entries|entries/i, /valid (?:until|till|from)/i, /duration of stay/i]},
-    {id:'passport', label:'Passport / ID', words:[/\bpassport\b|P<[A-Z]{3}|aadhaar|driving licen[cs]e|national id/i, 3], more:[/date of expiry|date of issue/i, /nationality/i]},
-    {id:'insurance', label:'Travel insurance', words:[/\binsurance\b|\bpolicy\b/i, 2], more:[/\binsured\b/i, /\bpremium\b/i, /sum insured|coverage/i]},
+    {id:'passport', label:'Passport', words:[/\bpassport\b|P<[A-Z]{3}/i, 3], more:[/date of expiry|date of issue/i, /nationality/i, /place of birth/i]},
+    {id:'insurance', label:'Insurance', words:[/\binsurance\b|\bpolicy\b/i, 2], more:[/\binsured\b/i, /\bpremium\b/i, /sum insured|coverage/i, /policy (?:no|number|period)/i]},
     {id:'car', label:'Car / cab booking', words:[/car rental|rent a car|\bcab\b|\btaxi\b|uber|\bola\b|chauffeur/i, 2], more:[/pick[\s-]?up/i, /drop[\s-]?off/i]},
     {id:'activity', label:'Activity / entry ticket', words:[/admission|entry ticket|\btour\b|\bmuseum\b|\bpark\b|\bshow\b|\bevent\b|klook|viator|getyourguide/i, 1], more:[/\bvisit date\b/i, /\btime slot\b/i]},
+    // personal documents
+    {id:'aadhaar', label:'Aadhaar', words:[/aadhaar|आधार|unique identification authority|\buidai\b/i, 5], more:[/\b\d{4}\s\d{4}\s\d{4}\b/, /government of india/i, /\bVID\b/]},
+    {id:'pan', label:'PAN card', words:[/permanent account number|\bpan card\b|e-?pan/i, 5], more:[/income tax department/i, /\b[A-Z]{5}\d{4}[A-Z]\b/, /father'?s name/i]},
+    {id:'licence', label:'Driving licence', words:[/driving licen[cs]e|licen[cs]e to drive|\bDL\s*No/i, 5], more:[/transport department|parivahan|\bRTO\b/i, /class of vehicle|\bCOV\b|\bLMV\b|\bMCWG\b/i, /valid (?:till|upto)/i]},
+    {id:'voter-id', label:'Voter ID', words:[/election commission|elector'?s photo identity|\bEPIC\b|voter id/i, 5], more:[/\b[A-Z]{3}\d{7}\b/, /assembly constituency/i]},
+    {id:'tax', label:'Tax (ITR, Form 16, 26AS)', words:[/form\s*(?:no\.?\s*)?16\b|form\s*26\s*as|income tax return|\bITR[-\s]?[1-7V]\b|annual information statement|\bAIS\b/i, 5], more:[/assessment year/i, /\bTDS\b|tax deducted/i, /acknowledgement number/i, /\b[A-Z]{5}\d{4}[A-Z]\b/]},
+    {id:'bank', label:'Bank statement', words:[/statement of account|account statement|bank statement/i, 4], more:[/opening balance/i, /closing balance/i, /\bIFSC\b/i, /withdrawal|deposit|narration/i]},
+    {id:'investment', label:'Investment (CAS, contract note, demat)', words:[/consolidated account statement|\bCAS\b|contract note|mutual fund|demat|\bNSDL\b|\bCDSL\b|\bfolio\b/i, 4], more:[/\bNAV\b|\bunits\b/i, /\bISIN\b/, /brokerage|\bSTT\b/i, /\bSIP\b/]},
+    {id:'property', label:'Property / rent', words:[/sale deed|rent(?:al)? agreement|lease agreement|leave and licen[cs]e|property tax|conveyance deed|\bkhata\b/i, 5], more:[/\blessor\b|\blessee\b|licensor|landlord|tenant/i, /\bsq\.?\s*ft\b|square feet/i, /stamp duty|sub-?registrar/i]},
+    {id:'vehicle', label:'Vehicle (RC, PUC)', words:[/registration certificate|pollution under control|\bPUCC?\b|certificate of registration/i, 5], more:[/chassis/i, /engine no/i, /\bmaker\b|fuel type/i, /\b[A-Z]{2}[-\s]?\d{1,2}[-\s]?[A-Z]{1,3}[-\s]?\d{4}\b/]},
+    {id:'medical', label:'Medical', words:[/prescription|discharge summary|lab(?:oratory)? report|pathology|radiology|vaccination certificate|\bpatient\b/i, 4], more:[/\bdr\.?\s|doctor|physician/i, /diagnosis|haemoglobin|hemoglobin|blood (?:test|group)|\bmg\b/i, /hospital|clinic/i]},
+    {id:'education', label:'Education', words:[/mark\s*sheet|marksheet|degree certificate|diploma|transcript|board of (?:secondary|higher)|provisional certificate/i, 4], more:[/university|college|school/i, /\bCGPA\b|\bSGPA\b|grade|percentage/i, /roll (?:no|number)|enrolment/i]},
+    {id:'employment', label:'Employment (offer, salary slip)', words:[/offer letter|appointment letter|salary slip|pay\s*slip|relieving letter|experience letter|employment contract/i, 5], more:[/basic (?:pay|salary)|\bHRA\b|gross (?:pay|salary)|net pay/i, /employee (?:id|code|no)/i, /designation|date of joining/i]},
+    {id:'bill', label:'Bill / warranty', words:[/tax invoice|\binvoice\b|warranty|electricity bill|bill (?:no|number|date)|amount due/i, 3], more:[/\bGSTIN\b/i, /due date/i, /serial (?:no|number)/i, /consumer (?:no|number)/i]},
   ];
+  /* Travel papers and personal documents, for the pickers and the Travel / Personal switch. */
+  const TRAVEL_TYPES = ['boarding-pass', 'flight', 'hotel', 'train', 'bus', 'visa', 'car', 'activity'];
+  const GROUPS = [
+    {id: 'travel', label: 'Travel', types: ['boarding-pass', 'flight', 'hotel', 'train', 'bus', 'visa', 'car', 'activity']},
+    {id: 'identity', label: 'Identity', types: ['passport', 'aadhaar', 'pan', 'licence', 'voter-id']},
+    {id: 'money', label: 'Money and tax', types: ['tax', 'bank', 'investment', 'insurance']},
+    {id: 'life', label: 'Home, health and work', types: ['property', 'vehicle', 'medical', 'education', 'employment', 'bill']},
+    {id: 'other', label: 'Other', types: ['other']},
+  ];
+  const isTravel = t => TRAVEL_TYPES.indexOf(t) >= 0;
+  /* ID numbers, shown masked in lists: •••• 1234 */
+  const mask = (n, type) => { n = String(n || ''); if(!n) return ''; return ['aadhaar', 'pan', 'bank', 'voter-id', 'licence', 'passport'].indexOf(type) >= 0 && n.replace(/\s/g, '').length > 4 ? '•••• ' + n.replace(/\s/g, '').slice(-4) : n; };
   const TYPE_LABEL = Object.fromEntries(TYPES.map(t=>[t.id, t.label]).concat([['other', 'Other']]));
   function guessType(text, barcode){
     if(barcode && barcode.legs) return 'boarding-pass';
@@ -363,10 +389,38 @@ const Parse = (function(){
       fields.people = people;
       fields.dates = dates.map(d=>d.date).filter((d, i, a)=>a.indexOf(d) === i).slice(0, 6);
       if(type === 'visa' || type === 'passport'){
-        fields.number = after(T, '(?:Visa|Passport|Document)\\s*(?:No\\.?|Number)', '([A-Z0-9]{6,15})');
-        const exp = /(?:expiry|expires|valid\s*(?:until|till|to|upto))/i.exec(T);
-        if(exp){ const d = findDates(T.slice(exp.index, exp.index + 80), refYear); if(d[0]) fields.validUntil = d[0].date; }
+        fields.number = after(T, '(?:Visa|Passport|Document)\\s*(?:No\\.?|Number)', '([A-Z0-9]{6,15})') || ((/\b([A-Z]\d{7})\b/.exec(T) || [])[1] || '');
       }
+      // the number that identifies each kind of personal document
+      const first = re => { const m = re.exec(T); return m ? m[1].replace(/\s+/g, ' ').trim() : ''; };
+      const NUM = {
+        aadhaar: /\b(\d{4}\s?\d{4}\s?\d{4})\b/, pan: /\b([A-Z]{5}\d{4}[A-Z])\b/, 'voter-id': /\b([A-Z]{3}\d{7})\b/,
+        licence: /\b([A-Z]{2}[-\s]?\d{2}[-\s]?(?:\d{4}[-\s]?)?\d{7,11})\b/, vehicle: /\b([A-Z]{2}[-\s]?\d{1,2}[-\s]?[A-Z]{1,3}[-\s]?\d{4})\b/,
+        tax: /\b([A-Z]{5}\d{4}[A-Z])\b/, investment: /folio\s*(?:no\.?|number)?\s*[:\-]?\s*([A-Z0-9\/]{5,20})/i,
+        insurance: /policy\s*(?:no\.?|number)\s*[:\-]?\s*([A-Z0-9\/-]{5,25})/i, bank: /(?:account|a\/c)\s*(?:no\.?|number)\s*[:\-]?\s*([X*\d][X*\d\s-]{5,20}\d)/i,
+      };
+      if(NUM[type]) fields.number = first(NUM[type]);
+      if(type === 'tax'){ const ay = /assessment year\s*[:\-]?\s*(\d{4}\s*-\s*\d{2,4})/i.exec(T); if(ay) fields.reference = 'AY ' + ay[1].replace(/\s/g, ''); }
+      // valid until / expires, and the date it was issued
+      const exp = /(?:date of expiry|expiry date|expires? on|valid\s*(?:until|till|to|upto|up to)|validity|policy (?:end|expiry)|renewal date)/i.exec(T);
+      if(exp){ const d = findDates(T.slice(exp.index, exp.index + 80), refYear); if(d[0]) fields.validUntil = d[0].date; }
+      const iss = /(?:date of issue|issue date|issued on|date of registration|dated)/i.exec(T);
+      if(iss){ const d = findDates(T.slice(iss.index, iss.index + 60), refYear); if(d[0]) fields.issuedOn = d[0].date; }
+      // a period "01/04/2026 to 31/03/2027": it ends on the second date
+      if(!fields.validUntil){ const per = /(?:policy\s*)?period[^\n]{0,40}?\bto\b/i.exec(T); if(per){ const d = findDates(T.slice(per.index, per.index + 70), refYear); if(d[1]) fields.validUntil = d[1].date; } }
+      // whose it is: "Name: …", the line above "DOB" (Aadhaar), "Insured persons: …"
+      const names = [];
+      const nm = /(?:^|\s)(?:Name|Holder'?s? name|Employee name|Patient(?: name)?|Insured(?: persons?)?)\s*[:\-]\s*([A-Za-z][A-Za-z .,']{2,80})/gi;
+      let mm;
+      while((mm = nm.exec(T))) if(!/(?:father|mother|husband|spouse|guardian|nominee)'?s?\s*$/i.test(T.slice(Math.max(0, mm.index - 14), mm.index + 1)))
+        // "Name: Anil Gupta Designation: …" - the last word is the next label
+        (T[mm.index + mm[0].length] === ':' ? mm[1].replace(/\s*\S+\s*$/, '') : mm[1]).split(/,| and /).map(x=>x.replace(/\s+(age|dob|male|female)\b.*$/i, '').trim()).filter(x=>x.length > 2 && /^[A-Za-z .']+$/.test(x)).forEach(x=>names.push(titleCase(x)));
+      const lines = T.split(/\n/).map(l=>l.trim());
+      const dobAt = lines.findIndex(l=>/\b(?:DOB|date of birth|year of birth)\b/i.test(l));
+      if(dobAt > 0 && /^[A-Za-z][A-Za-z .']{2,40}$/.test(lines[dobAt - 1]) && !/government|authority|india|department/i.test(lines[dobAt - 1])) names.push(titleCase(lines[dobAt - 1]));
+      fields.people = Array.from(new Set(names.concat(fields.people || []))).slice(0, 6);
+      if(type === 'insurance' && names.length) fields.passengers = names;
+      if(fields.number) found.push('number');
       if(fields.dates.length) found.push('dates');
     }
     const confidence = bc ? 0.95 : Math.min(0.9, 0.2 + found.length * 0.2 + (T.length > 200 ? 0.1 : 0));
@@ -390,6 +444,6 @@ const Parse = (function(){
   }
 
   return {findDates, findTimes, time24, parseBCBP, julianToDate, findFlights, findAirports, findPNR, findPassengers,
-    flightSegments, hotelFields, trainFields, guessType, read, span, setReference, airport, airline, TYPES, TYPE_LABEL, titleCase};
+    flightSegments, hotelFields, trainFields, guessType, read, span, setReference, airport, airline, TYPES, TYPE_LABEL, titleCase, GROUPS, isTravel, mask};
 })();
 if(typeof module !== 'undefined') module.exports = Parse;
