@@ -17,7 +17,7 @@ VIEWS.news = function(main, cur){
   const art = a => `<li><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.title)}</a><span class="muted small"> · ${esc(a.source)}${a.date ? ' · ' + esc(ago(Date.parse(a.date))) : ''}</span></li>`;
   const col = (title, list, emptyText) => `<section class="card news-col"><h2>${title}</h2>${list && list.length ? `<ul class="news-list">${list.slice(0, 12).map(art).join('')}</ul>` : `<p class="muted small">${emptyText}</p>`}</section>`;
   main.innerHTML = `
-  <section class="section-head"><div><p class="eyebrow">News &amp; safety</p><h1>${esc(city || cur.name)}${country && country !== city ? `<span class="muted">, ${esc(country)}</span>` : ''}</h1></div>
+  <section class="section-head"><div><h1>${esc(city || cur.name)}${country && country !== city ? `<span class="muted">, ${esc(country)}</span>` : ''}</h1></div>
     <div class="row">
       ${cities.length > 1 ? `<select id="n-city">${cities.map(c=>`<option${c.city === city ? ' selected' : ''}>${esc(c.city)}</option>`).join('')}</select>` : ''}
       ${Cloud.canSearch() ? `<label class="check small"><input type="checkbox" id="n-deep" ${newsState.deep ? 'checked' : ''}> AI also searches the web</label>` : ''}
@@ -97,7 +97,7 @@ VIEWS.flights = function(main, cur){
   const fk = S.settings.flightKeys || {};
   const hasSource = fk.aerodatabox || fk.airlabs || Cloud.canSearch();
   main.innerHTML = `
-  <section class="section-head"><div><p class="eyebrow">Flight status</p><h1>${esc(cur ? cur.name : 'All flights')}</h1></div>
+  <section class="section-head"><div><h1>${esc(cur ? cur.name : 'All flights')}</h1></div>
     <div class="row"><button class="btn primary" id="fl-all" ${upcoming.length && hasSource ? '' : 'disabled'}>${icon('refresh')} Check all</button><button class="btn soft" id="fl-add">${icon('plus')} Add a flight</button></div></section>
   ${!hasSource ? `<section class="card notice"><b>Live status needs one free key.</b> Add an AeroDataBox or AirLabs key, or a Google Gemini key (AI searches the web) in <a href="#" id="fl-keys">Settings → Flight status</a>. The links on each flight work without one.</section>` : ''}
   <section class="flight-list">${upcoming.map(flightCard).join('') || `<div class="card muted">No upcoming flights${cur ? ' in this trip' : ''}. Upload a ticket or boarding pass, or add a flight by number.</div>`}</section>

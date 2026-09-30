@@ -42,7 +42,7 @@ VIEWS.plan = function(main, cur){
   const nErr = problems.filter(p=>p.level === 'error').length, nWarn = problems.filter(p=>p.level === 'warn').length;
 
   main.innerHTML = `
-  <section class="section-head"><div><p class="eyebrow">Itinerary</p><h1>${esc(cur.name)}</h1></div>
+  <section class="section-head"><div><h1>${esc(cur.name)}</h1></div>
     <div class="row">${plan ? `<button class="btn ghost" id="p-undo" ${plan.versions && plan.versions.length ? '' : 'disabled'}>Undo</button><button class="btn ghost" id="p-copy">Copy as text</button>` : ''}<button class="btn soft" id="p-rules">${icon('shield')} Rules</button></div></section>
   <section class="card plan-setup">
     <div class="grid4">

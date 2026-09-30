@@ -42,6 +42,15 @@ VIEWS.newTrip = function(prefill, after){
   };
 };
 
+const passSky = () => `<svg class="pass-sky" viewBox="0 0 600 240" preserveAspectRatio="xMaxYMin meet" aria-hidden="true">
+  <circle cx="518" cy="60" r="74" fill="#FFC53D" opacity=".16"/><circle cx="518" cy="60" r="40" fill="#FFC53D"/>
+  <g class="sky-clouds" fill="#fff" opacity=".16"><rect x="316" y="160" width="160" height="34" rx="17"/><rect x="362" y="140" width="84" height="34" rx="17"/><rect x="40" y="36" width="126" height="26" rx="13"/><rect x="74" y="22" width="60" height="26" rx="13"/></g>
+  <path class="sky-route" d="M20 220 C 180 90, 360 40, 590 120" fill="none" stroke="#fff" stroke-opacity=".6" stroke-width="2.5" stroke-dasharray="2 11" stroke-linecap="round"/>
+  <g class="pass-plane"><g transform="translate(426 84) rotate(5)" fill="#fff">
+    <path d="M-24 0 C-24 -3.5 18 -4.5 25 0 C18 4.5 -24 3.5 -24 0Z"/><path d="M2 -2 L-9 -23 L-2 -23 L13 -2Z"/><path d="M2 2 L-9 23 L-2 23 L13 2Z"/>
+    <path d="M-17 -1 L-24 -11 L-19 -11 L-11 -1Z"/><path d="M-17 1 L-24 11 L-19 11 L-11 1Z"/></g></g>
+</svg>`;
+
 VIEWS.trips = function(main, cur){
   const trips = S.trips.map(t=>Object.assign({}, t, tripSpan(t)));
   const upcoming = trips.filter(t=>!t.end || t.end >= todayISO()).sort((a, b)=>String(a.start || '9').localeCompare(String(b.start || '9')));
@@ -49,9 +58,12 @@ VIEWS.trips = function(main, cur){
   const unfiled = S.docs.filter(d=>!d.tripId);
   if(!S.trips.length && !S.docs.length){
     main.innerHTML = `<section class="hero">
-      <h1>Every ticket, stay and plan for your trips, in one place.</h1>
-      <p>Upload tickets, boarding passes and hotel bookings — Trip Vault reads them, builds your trip, plans the days, watches the news and your flights.</p>
-      <div class="row"><button class="btn primary big" id="h-up">${icon('upload')} Upload a document</button><button class="btn soft big" id="h-new">${icon('plus')} Create a trip</button></div>
+      <div class="pass"><div class="pass-main">${passSky()}
+        <p class="pass-when">Trip Vault</p>
+        <h1>Where to next?</h1>
+        <p class="pass-lead">Upload your tickets and hotel bookings. Trip Vault reads them, builds the trip, plans each day and keeps an eye on the news and your flights.</p>
+        <div class="row"><button class="btn primary big" id="h-up">${icon('upload')} Upload a ticket or booking</button><button class="btn soft big" id="h-new">${icon('plus')} Create a trip</button></div>
+      </div><div class="pass-stub"><span class="stub-big">✈</span><span class="stub-small">Your first trip</span></div></div>
       <ol class="steps"><li><b>Upload</b> a ticket or booking (PDF or photo, from the phone too)</li><li><b>Check</b> what the reader found: whose it is, what it is</li><li><b>Plan</b> the days with AI, following your rules</li><li><b>Watch</b> news and flight status before you go</li></ol>
     </section>`;
     $('h-up').onclick = ()=>{ location.hash = 'docs'; setTimeout(()=>$('file-in') && $('file-in').click(), 50); };
@@ -72,10 +84,19 @@ VIEWS.trips = function(main, cur){
   if(cur){
     const t = Object.assign({}, cur, tripSpan(cur));
     const n = t.start ? daysUntil(t.start) : null;
-    html += `<section class="trip-head">
-      <div><p class="eyebrow">${n === null ? 'Current trip' : n > 0 ? 'Starts in ' + n + ' day' + (n === 1 ? '' : 's') : t.end >= todayISO() ? 'Happening now' : 'Past trip'}</p>
-      <h1>${esc(t.name)}</h1><p class="muted">${esc([t.city, t.country].filter(Boolean).join(', '))}${t.start ? ' · ' + esc(fmtRange(t.start, t.end)) : ''}</p></div>
-      <div class="row"><button class="btn primary" id="go-up">${icon('upload')} Add document</button><button class="btn soft" id="go-plan">${icon('map')} Itinerary</button><button class="btn ghost" data-edit-trip="${esc(t.id)}">${icon('edit')} Edit</button></div>
+    const first = flightsOf(t.id)[0];
+    const total = t.start && t.end ? Rules.daysBetween(t.start, t.end) + 1 : 0;
+    const stub = n === null ? ['?', 'add the dates']
+      : n > 0 ? [String(n), n === 1 ? 'day to go' : 'days to go']
+      : t.end >= todayISO() ? [String(Rules.daysBetween(t.start, todayISO()) + 1), 'of ' + total + ' days']
+      : ['✓', 'trip done'];
+    html += `<section class="pass"><div class="pass-main">${passSky()}
+        <p class="pass-when">${n === null ? 'Your trip' : n > 0 ? 'Your next trip' : t.end >= todayISO() ? 'You’re travelling' : 'Past trip'}</p>
+        <h1>${esc(t.name)}</h1>
+        <p class="pass-where">${esc([t.city, t.country].filter(Boolean).join(', ') || 'Where to?')}${t.start ? ' — ' + esc(fmtRange(t.start, t.end)) : ''}</p>
+        <div class="row"><button class="btn primary" id="go-up">${icon('upload')} Add a document</button><button class="btn soft" id="go-plan">${icon('map')} Itinerary</button><button class="btn ghost" data-edit-trip="${esc(t.id)}">${icon('edit')} Edit</button></div>
+      </div>
+      <div class="pass-stub"><span class="stub-big">${esc(stub[0])}</span><span class="stub-small">${esc(stub[1])}</span>${first && first.from && first.to ? `<span class="stub-route">${esc(first.from)} → ${esc(first.to)}</span>` : ''}</div>
     </section>`;
     html += `<section class="card"><h2>Timeline</h2>${timeline(t)}</section>`;
   }
@@ -485,7 +506,7 @@ VIEWS.memories = function(main, cur){
   if(!cur){ main.innerHTML = `<div class="card"><p>Create a trip first, then keep its photos and notes here.</p><button class="btn primary" onclick="VIEWS.newTrip()">New trip</button></div>`; return; }
   const span = tripSpan(cur);
   const mems = S.memories.filter(m=>m.tripId === cur.id).sort((a, b)=>String(a.date).localeCompare(String(b.date)) || a.createdAt - b.createdAt);
-  main.innerHTML = `<section class="section-head"><div><p class="eyebrow">Memories</p><h1>${esc(cur.name)}</h1></div></section>
+  main.innerHTML = `<section class="section-head"><div><h1>${esc(cur.name)}</h1></div></section>
     <form class="card mem-new" id="mem-f">
       <div class="grid3"><label>Day<input type="date" id="m-date" value="${esc(todayISO() >= span.start && todayISO() <= span.end ? todayISO() : span.start || todayISO())}"></label>
       <label class="span2">Title<input id="m-title" placeholder="Sunset at Chapora Fort"></label></div>

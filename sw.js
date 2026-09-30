@@ -1,7 +1,7 @@
 /* Offline: the app itself is kept, so tickets already on this device open at the airport without a signal.
    Pages and code: network first (always the latest when online), cache when offline.
    Libraries from CDNs (pdf.js, OCR): cached once used. Nothing personal passes through here. */
-const CACHE = 'trip-vault-v1';
+const CACHE = 'trip-vault-v2';
 const SHELL = ['./', 'index.html', 'style.css', 'parse.js', 'rules.js', 'cloud.js', 'services.js', 'core.js', 'docs.js', 'plan.js', 'live.js',
   'data/airports.json', 'data/airlines.json', 'icon.svg', 'manifest.webmanifest'];
 self.addEventListener('install', e=>{ e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting())); });
