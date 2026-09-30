@@ -397,10 +397,10 @@ function openSettings(section){
   const card = openModal(`<h2>Settings</h2>
   <div class="settings">
     <details ${!section || section === 'ai' ? 'open' : ''}><summary>${icon('spark')} AI assistants</summary>
-      <p class="muted">Free AI keys read your documents, plan the itinerary and summarise the news. ${Object.values(ai.from).some(f=>f !== 'trip-vault') ? 'Keys from your Expense Tracker / Ledger in this browser are used automatically.' : 'Keys you added in the Expense Tracker are used here too, in the same browser.'}
+      <p class="muted">Free AI keys read your documents, plan the itinerary and summarise the news. ${Cloud.central ? 'These are the <b>shared keys of all your apps</b> — the same in Money Home, the Ledger and the Expense Tracker. <a href="/ai/">Open the AI hub</a> to test them.' : 'Keys from your Expense Tracker / Ledger in this browser are used automatically.'}
       A <b>Google Gemini</b> key is the most useful: it reads photos and scans, and can search the web for live news and flight status.</p>
-      <div class="keys">${Cloud.PROVIDERS.map(p=>`<label class="key-row"><span>${esc(p.name)} ${ai.from[p.id] && ai.from[p.id] !== 'trip-vault' ? `<em class="chip soft">from ${ai.from[p.id] === 'ledger' ? 'Ledger' : ai.from[p.id] === 'synced' ? 'your other device' : 'Expense Tracker'}</em>` : ''} <a href="${p.signupUrl}" target="_blank" rel="noopener" class="small">get a key</a></span>
-        <input data-ai="${p.id}" type="password" autocomplete="off" placeholder="${esc(ai.from[p.id] && ai.from[p.id] !== 'trip-vault' ? '(using the other app’s key)' : p.placeholder)}" value="${esc((own.keys || {})[p.id] || '')}"></label>`).join('')}</div>
+      <div class="keys">${Cloud.PROVIDERS.map(p=>`<label class="key-row"><span>${esc(p.name)} ${ai.from[p.id] && ['trip-vault', 'hub'].indexOf(ai.from[p.id]) < 0 ? `<em class="chip soft">from ${({ledger: 'Ledger', synced: 'your other device', 'expense-tracker': 'Expense Tracker'})[ai.from[p.id]] || ai.from[p.id]}</em>` : ''} <a href="${p.signupUrl}" target="_blank" rel="noopener" class="small">get a key</a></span>
+        <input data-ai="${p.id}" type="password" autocomplete="off" placeholder="${esc(ai.from[p.id] && ['trip-vault', 'hub'].indexOf(ai.from[p.id]) < 0 ? '(using the other app’s key)' : p.placeholder)}" value="${esc((own.keys || {})[p.id] || '')}"></label>`).join('')}</div>
       <div class="grid2">
         <label>Which AI goes first
           <select id="ai-first"><option value="auto">Auto — the best one that answers, free ones first</option>${Cloud.PROVIDERS.map(p=>`<option value="${p.id}"${ai.first === p.id ? ' selected' : ''}${ai.keys[p.id] ? '' : ' disabled'}>${esc(p.name)}${ai.keys[p.id] ? '' : ' (no key)'}</option>`).join('')}</select></label>

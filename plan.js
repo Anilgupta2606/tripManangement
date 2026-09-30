@@ -6,7 +6,7 @@
    what must stay, and tell the AI what you don't like in the issues box.
    ========================================================= */
 
-const planState = {city: '', busy: false, ctl: null};
+const planState = {city: '', busy: false, ctl: null, web: true};
 const planKey = (tripId, city) => tripId + '|' + String(city || '').toLowerCase();
 const LOCAL_WEATHER = {};
 
@@ -59,6 +59,7 @@ VIEWS.plan = function(main, cur){
       <button class="btn primary" id="p-ai" ${Cloud.aiAvailable() ? '' : 'disabled title="Add a free AI key in Settings"'}>${icon('spark')} ${plan ? 'Re-plan with AI' : 'Plan with AI'}</button>
       <button class="btn soft" id="p-skel">${plan ? 'Reset to built-in layout' : 'Lay out the days (no AI)'}</button>
       ${Cloud.aiAvailable() ? '' : '<span class="muted small">AI planning needs a free key — <a href="#" id="p-key">add one</a>.</span>'}
+      ${Cloud.canSearch() ? `<label class="check small"><input type="checkbox" id="p-web" ${planState.web ? 'checked' : ''}> AI searches the web too</label>` : ''}
       <span class="muted small" id="p-status"></span>
     </div>
   </section>
@@ -75,6 +76,8 @@ VIEWS.plan = function(main, cur){
     <p class="muted small">For example: “Day 2 is too packed”, “I have a meeting on the 14th at 3 pm”, “add a beach day”, “we are vegetarian”, “no temples, more food places”. Items you lock ${icon('lock')} are kept as they are.</p>
     <textarea id="p-issue" rows="3" placeholder="What should change?"></textarea>
     <div class="row"><button class="btn primary" id="p-send" ${Cloud.aiAvailable() ? '' : 'disabled'}>Update the plan</button><span class="muted small">${plan.by ? 'Last planned by ' + esc(plan.by) : ''}</span></div>
+    ${(plan.used || []).length ? `<p class="muted small">Planned with: ${esc(plan.used.join(' · '))}.</p>` : ''}
+    ${(plan.sources || []).length ? `<details><summary class="small">Sources the AI used (${plan.sources.length})</summary><ul class="history small">${plan.sources.map(x=>`<li><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a></li>`).join('')}</ul></details>` : ''}
     ${(plan.history || []).length ? `<details><summary class="small">What was asked before (${plan.history.length})</summary><ul class="history small">${plan.history.slice().reverse().map(h=>`<li><span class="muted">${esc(ago(h.at))}</span> ${esc(h.text)}</li>`).join('')}</ul></details>` : ''}
   </section>` : `<section class="card"><p class="muted">No plan for ${esc(planState.city || 'this city')} yet. <b>Plan with AI</b> builds every day around your flights and hotel, following the rules; <b>Lay out the days</b> puts in only the fixed parts (flights, transfers, check-in/out, meals) for you to fill.</p></section>`}`;
 
@@ -87,6 +90,7 @@ VIEWS.plan = function(main, cur){
   };
   ['p-city', 'p-start', 'p-end', 'p-hotel'].forEach(id=>$(id).onchange = reSetup);
   $('p-rules').onclick = ()=>openRules();
+  if($('p-web')) $('p-web').onchange = e=>{ planState.web = e.target.checked; };
   if($('p-key')) $('p-key').onclick = e=>{ e.preventDefault(); openSettings('ai'); };
   $('p-skel').onclick = async ()=>{
     if(plan && !(await confirmBox('Replace the plan?', 'The current plan is kept in Undo.', 'Replace'))) return;
@@ -116,11 +120,11 @@ function readSetup(ctx){
   if(!c.start || !c.end){ toast('Set the dates first (or upload the tickets and hotel booking).', 'error'); return null; }
   return c;
 }
-function storePlan(trip, c, days, by, what){
+function storePlan(trip, c, days, by, what, extra){
   const key = planKey(trip.id, c.city);
   const p = S.plans[key] || {tripId: trip.id, city: c.city, history: [], versions: []};
   if(p.days) p.versions = (p.versions || []).concat([{at: Date.now(), days: p.days}]).slice(-15);
-  Object.assign(p, {city: c.city, country: c.country, start: c.start, end: c.end, hotel: c.hotel, days, by});
+  Object.assign(p, {city: c.city, country: c.country, start: c.start, end: c.end, hotel: c.hotel, days, by}, extra || {sources: [], used: []});
   if(what) p.history = (p.history || []).concat([{at: Date.now(), text: what}]).slice(-30);
   S.plans[key] = touch(p);
   save(); render();
@@ -145,6 +149,7 @@ const wxIcon = c => c === 0 ? '☀️' : c <= 2 ? '🌤️' : c === 3 ? '☁️'
 const PLAN_SYSTEM = rules => `You are a careful local travel planner. You write a realistic day-by-day itinerary for one city and answer with JSON only:
 {"days":[{"date":"YYYY-MM-DD","title":"short theme of the day","items":[{"id":"keep existing ids","start":"HH:MM","end":"HH:MM","title":"what","place":"exact place name (for Google Maps)","kind":"sight|activity|meal|shopping|rest|transit|flight|hotel|free","notes":"one line: why, tips, tickets, timings","outdoor":true|false,"cost":"approx per person, local currency","locked":true|false}]}],"summary":"one line on what changed or the idea of the plan"}
 Include every date from start to end. Include flights, transfers, hotel check-in/out as items. Use real places that exist in the city, close to each other on the same day.
+You are given what the internet says about the place: travel-guide listings with opening hours and prices, notable places near the hotel with their distance, the weather forecast and the news. Prefer those real places, keep to their listed hours and put far-apart places on different days. If you can search the web, check current opening hours, closures, festivals and events on the travel dates, and say in the notes what you found.
 THE RULES (follow all of them):
 ${rules}`;
 async function aiPlan(trip, c, issue){
@@ -159,9 +164,17 @@ async function aiPlan(trip, c, issue){
   if(btn) btn.innerHTML = '<span class="spinner"></span> Planning… (tap to stop)';
   if(st) st.textContent = '';
   try{
+    // what the internet says about the place, for the AI to plan with
+    const say = t => { const e = $('p-status'); if(e) e.textContent = t; };
+    say('Reading about ' + c.city + ' on the internet…');
+    const know = await Knowledge.gather(c.city, c.country, c.hotel).catch(()=>null);
+    const used = (know ? know.used : []).slice();
+    if(c.weather || LOCAL_WEATHER[key]) used.push('weather forecast');
     let news = '';
     const cachedNews = LOCAL.news[trip.id];
-    if(cachedNews && cachedNews.summary) news = `Current situation (${ago(cachedNews.summary.at)}): ${cachedNews.summary.headline} ${cachedNews.summary.points.join(' ')} ${cachedNews.summary.advice}`;
+    if(cachedNews && cachedNews.summary){ news = `Current situation (${ago(cachedNews.summary.at)}): ${cachedNews.summary.headline} ${cachedNews.summary.points.join(' ')} ${cachedNews.summary.advice}`; used.push('news summary'); }
+    else if(cachedNews && cachedNews.advisory){ news = 'Travel advice: ' + cachedNews.advisory.levelText + '. ' + String(cachedNews.advisory.summary || '').slice(0, 600); used.push('travel advice'); }
+    const local = Knowledge.forPrompt(know);
     const facts = {
       city: c.city, country: c.country, start: c.start, end: c.end,
       hotel: c.hotel, arrival: c.arrival ? {flight: c.arrival.flight, from: c.arrival.from, date: c.arrival.date, lands: c.arrival.arr} : null,
@@ -171,17 +184,29 @@ async function aiPlan(trip, c, issue){
       bookings: docsOf(trip.id).filter(d=>['activity', 'car', 'train', 'bus'].indexOf(d.type) >= 0).map(d=>({what: d.title, date: d.fields.date, time: d.fields.dep})),
       notes: trip.notes || '',
     };
-    const turns = [{role: 'user', content: `Plan the stay.\nFacts: ${JSON.stringify(facts)}${news ? '\n' + news : ''}` +
+    const turns = [{role: 'user', content: `Plan the stay.\nFacts: ${JSON.stringify(facts)}${news ? '\n' + news : ''}${local ? '\n\nWhat the internet says about ' + c.city + ':\n' + local : ''}` +
       (prev && prev.days ? `\n\nThe current plan (keep what works; items with "locked": true must stay exactly):\n${JSON.stringify({days: prev.days})}` : '') +
       (issue ? `\n\nThe traveller asks: "${issue}"\nChange the plan to do this, following the rules.` : '')}];
-    const r = await Cloud.chat(PLAN_SYSTEM(Rules.asPrompt(c.rules, {issues: !!issue})), turns, {}, planState.ctl.signal);
+    // with a Gemini key the AI also searches the web (opening hours, closures, events on the dates); else it plans from the facts above
+    const web = planState.web && Cloud.canSearch();
+    say(web ? 'The AI is planning and searching the web…' : 'The AI is planning…');
+    let r;
+    try{ r = await Cloud.chat(PLAN_SYSTEM(Rules.asPrompt(c.rules, {issues: !!issue})), turns, web ? {search: true} : {}, planState.ctl.signal); }
+    catch(e){
+      if(!web || e.code === 'cancelled') throw e;
+      say('Web search unavailable — planning from the facts…');
+      r = await Cloud.chat(PLAN_SYSTEM(Rules.asPrompt(c.rules, {issues: !!issue})), turns, {}, planState.ctl.signal);
+    }
+    if(r.sources && r.sources.length) used.push('web search (' + r.sources.length + ' sources)');
+    say('');
     const j = Cloud.json(r.text);
     const clean = Rules.clean(j, prev);
     if(!clean.days.length) throw new Error('The AI returned an empty plan. Try again.');
     // days outside the stay are dropped; missing days come from the built-in layout
     const sk = Rules.skeleton({city: c.city, start: c.start, end: c.end, hotel: c.hotel, arrival: c.arrival, departure: c.departure}, c.rules);
     const days = sk.days.map(d=>clean.days.find(x=>x.date === d.date) || d);
-    storePlan(trip, c, days, r.provider + ' · ' + r.model, issue ? issue : (prev ? 'Re-planned with AI' : 'Planned with AI') + (j.summary ? ': ' + j.summary : ''));
+    storePlan(trip, c, days, r.provider + ' · ' + r.model, issue ? issue : (prev ? 'Re-planned with AI' : 'Planned with AI') + (j.summary ? ': ' + j.summary : ''),
+      {sources: (r.sources || []).slice(0, 15).concat(know && know.guide ? [{title: 'Wikivoyage: ' + know.guide.title, url: know.guide.url}] : []), used});
     const probs = Rules.check({days}, c.rules, Object.assign({}, c, {weather: LOCAL_WEATHER[key]}));
     toast(j.summary ? j.summary : 'Plan updated.' + (probs.some(p=>p.level === 'error') ? ' Some rules still break — see the checker.' : ''));
   }catch(e){

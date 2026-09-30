@@ -479,3 +479,84 @@ Use "unknown" if you cannot find information for that exact date; "scheduled" if
   });
   return {status, links, aerodatabox, airlabs};
 })();
+
+/* ================================================================ Knowledge: what the internet says about a place,
+   for the itinerary planner - fetched in the browser, no key:
+   · Wikivoyage: the city's travel guide - its listings (sights, things to do, where to eat) with opening
+     hours and prices, and the "Get around" / "Stay safe" advice,
+   · Wikipedia: notable places around the hotel, with their distance from it. */
+const Knowledge = (function(){
+  const cache = {};
+  const clean = t => String(t || '').replace(/\[\[(?:[^|\]]*\|)?([^\]]*)\]\]/g, '$1').replace(/\[https?:\S+\s([^\]]*)\]/g, '$1').replace(/'{2,}/g, '')
+    .replace(/<[^>]+>/g, '').replace(/\{\{[^{}]*\}\}/g, '').replace(/={2,}\s*([^=]+?)\s*={2,}/g, '$1:')
+    .replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
+  function fields(body){
+    const out = {};
+    body.split(/\n?\s*\|\s*/).forEach(part=>{ const m = /^([a-z]+)\s*=\s*([\s\S]*)$/i.exec(part.trim()); if(m) out[m[1].toLowerCase()] = clean(m[2]); });
+    return out;
+  }
+  async function wikivoyage(page){
+    const res = await fetch('https://en.wikivoyage.org/w/api.php?action=parse&prop=wikitext&format=json&origin=*&redirects=1&page=' + encodeURIComponent(page));
+    const d = await res.json();
+    return d.parse ? {title: d.parse.title, text: d.parse.wikitext['*']} : null;
+  }
+  /* -> {title, listings:[{kind, name, hours, price, note}], advice:{'Get around', 'Stay safe', ...}} */
+  async function guide(city){
+    const k = 'g:' + city.toLowerCase();
+    if(cache[k]) return cache[k];
+    const page = await wikivoyage(city).catch(()=>null);
+    if(!page) return cache[k] = null;
+    const listings = [];
+    const re = /\{\{\s*(see|do|eat|drink|buy)\s*\|([\s\S]*?)\}\}/gi;          // sights, things to do, food, drink, shopping
+    let m;
+    while((m = re.exec(page.text)) && listings.length < 60){
+      const f = fields(m[2]);
+      if(!f.name) continue;
+      listings.push({kind: m[1].toLowerCase(), name: f.name, hours: f.hours || '', price: f.price || '', note: (f.content || '').slice(0, 160)});
+    }
+    const advice = {};
+    ['See', 'Do', 'Eat', 'Get around', 'Stay safe', 'Respect', 'Cope'].forEach(h=>{
+      const sm = new RegExp('\\n==\\s*' + h + '\\s*==([\\s\\S]*?)(?=\\n==[^=]|$)').exec(page.text);
+      if(sm){ const t = clean(sm[1].replace(/\{\{\s*(see|do|eat|drink|buy|listing)[\s\S]*?\}\}/gi, '').replace(/\n===?[^=\n]+===?/g, ' ')); if(t.length > 40) advice[h] = t.slice(0, listings.length >= 8 ? 500 : 1200); }
+    });
+    return cache[k] = {title: page.title, listings, advice, url: 'https://en.wikivoyage.org/wiki/' + encodeURIComponent(page.title.replace(/ /g, '_'))};
+  }
+  /* Notable places within ~10 km, nearest first -> [{name, km}] (schools, offices and the like left out) */
+  async function nearby(loc){
+    const k = 'n:' + loc.lat.toFixed(3) + ',' + loc.lng.toFixed(3);
+    if(cache[k]) return cache[k];
+    const res = await fetch('https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gsradius=10000&gslimit=60&format=json&origin=*&gscoord=' + loc.lat + '%7C' + loc.lng);
+    const d = await res.json();
+    const skip = /school|college|university|institute|hospital|constituency|assembly|court|office|ministry|bank|company|station$|depot|district|taluka|ward|panchayat|stadium|ground$|cricket|election|police/i;
+    return cache[k] = ((d.query || {}).geosearch || []).filter(g=>!skip.test(g.title)).map(g=>({name: g.title, km: Math.round(g.dist / 100) / 10}));
+  }
+  /* Everything for a stay: -> {loc, hotelLoc, guide, nearby, used:[what was found]} */
+  async function gather(city, country, hotel){
+    const used = [];
+    let hotelLoc = null;
+    if(hotel && hotel.name){ hotelLoc = await Geo.place([hotel.name, hotel.address || city].filter(Boolean).join(', ')).catch(()=>null); }
+    const loc = hotelLoc || await cityLoc(city, country).catch(()=>null);
+    // the guide for the hotel's own town too (a state or region page has few listings: "Goa" vs "Candolim")
+    const town = hotelLoc && hotelLoc.city && hotelLoc.city.toLowerCase() !== city.toLowerCase() ? hotelLoc.city : '';
+    const [g0, gTown, n] = await Promise.all([guide(city).catch(()=>null), town ? guide(town).catch(()=>null) : null, loc ? nearby(loc).catch(()=>[]) : []]);
+    let g = g0;
+    if(gTown && gTown.listings.length){
+      const seen = new Set();
+      g = {title: gTown.title + (g0 ? ' + ' + g0.title : ''), url: gTown.url, advice: Object.assign({}, g0 ? g0.advice : {}, gTown.advice),
+        listings: gTown.listings.concat(g0 ? g0.listings : []).filter(l=>{ const k = l.name.toLowerCase(); if(seen.has(k)) return false; seen.add(k); return true; })};
+    }
+    if(g && (g.listings.length || Object.keys(g.advice).length)) used.push('travel guide (' + (g.listings.length ? g.listings.length + ' places' : 'advice') + ')');
+    if(n.length) used.push(n.length + ' places near ' + (hotelLoc ? 'the hotel' : 'the centre'));
+    return {loc, hotelLoc, guide: g, nearby: n, used};
+  }
+  /* The facts, short enough for any model's prompt. */
+  function forPrompt(k){
+    if(!k) return '';
+    const out = [];
+    if(k.guide && k.guide.listings.length) out.push('Travel guide (' + k.guide.title + ') - real places with opening hours:\n' + k.guide.listings.slice(0, 45).map(l=>`- ${l.name} [${l.kind}]${l.hours ? ' hours: ' + l.hours : ''}${l.price ? ' price: ' + l.price : ''}${l.note ? ' - ' + l.note : ''}`).join('\n'));
+    if(k.guide) Object.entries(k.guide.advice).forEach(([h, t])=>out.push(h + ' (guide): ' + t));
+    if(k.nearby.length) out.push('Notable places near ' + (k.hotelLoc ? 'the hotel' : 'the city centre') + ' (km): ' + k.nearby.slice(0, 35).map(p=>p.name + ' ' + p.km).join(', '));
+    return out.join('\n\n').slice(0, 9000);
+  }
+  return {guide, nearby, gather, forPrompt};
+})();

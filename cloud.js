@@ -471,7 +471,15 @@ const Cloud = (function(){
     throw new Error('The AI answer was cut off. Try again.');
   }
 
-  return {expenseTracker, checkLogin, loginSource, sha256,
+  const api = {expenseTracker, checkLogin, loginSource, sha256,
           syncConfig, saveSyncConfig, otherAppSync, syncNow, markSaved, forgetSync, uploadFile, downloadFile, deleteFile,
           PROVIDERS, loadAi, aiSettings, aiStatus, rankModels, shareableAi, takeSyncedAi, aiLocal, saveAiLocal, aiAvailable, aiNames, canSee, canSearch, resting, wake, chat, json, b64, unb64};
+  /* The site's central AI (the AI hub on Money Home, /ai/ai.js) when it is loaded: one set of keys and the same
+     choice of service and model for every app. This file's own copy is used only when it is missing (a local copy). */
+  if(typeof MoneyAI !== 'undefined'){
+    ['PROVIDERS', 'loadAi', 'aiSettings', 'aiLocal', 'saveAiLocal', 'aiStatus', 'rankModels', 'shareableAi', 'takeSyncedAi',
+     'aiAvailable', 'aiNames', 'canSee', 'canSearch', 'resting', 'wake', 'chat', 'json'].forEach(k=>{ api[k] = MoneyAI[k]; });
+    api.central = true;
+  }
+  return api;
 })();
