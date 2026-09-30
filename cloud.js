@@ -423,6 +423,8 @@ const Cloud = (function(){
      opts.images: only services that can see are tried. opts.search: only Gemini (Google Search) is tried. */
   async function chat(system, turns, opts, signal){
     opts = opts || {};
+    // opts.onProgress(text, id): each step as it happens - which AI is asked, which is skipped and why
+    const tell = (t, id) => { try{ if(opts.onProgress) opts.onProgress(t, id); }catch(e){} };
     const tier = opts.tier === 'fast' ? 'fast' : 'smart';
     const s = aiSettings();
     let order = usable(s);
@@ -439,7 +441,8 @@ const Cloud = (function(){
     const working = lsGet(WORKING_KEY, {});
     for(const id of order){
       const r = resting(id);
-      if(r){ skipped.push(PROVIDERS.find(p=>p.id === id).name + ' is resting (' + r.why + ')'); continue; }
+      const pname = PROVIDERS.find(p=>p.id === id).name;
+      if(r){ skipped.push(pname + ' is resting (' + r.why + ')'); tell(pname + ' is at its free limit — skipping'); continue; }
       const key = s.keys[id];
       const pinned = s.model[id] && s.model[id] !== 'auto' ? [s.model[id]] : [];
       const last = id === 'ollama' ? null : (working[id] || {})[tier];     // on this computer: always the light model first, not the one that last answered
@@ -447,13 +450,15 @@ const Cloud = (function(){
         .filter(m=>pinned.indexOf(m) >= 0 || !isBad(id, m)).slice(0, 5);
       for(const model of models){
         try{
+          tell('Asking ' + pname + ' · ' + model + (opts.search ? ' (with a web search)' : '') + '…', id);
           const out = await callOne(id, key, model, system, turns, opts, signal);
           remember(id, tier, model); wake(id);
           return Object.assign(out, {provider: PROVIDERS.find(p=>p.id === id).name, model});
         }catch(e){
           if(e.code === 'cancelled') throw e;
           lastError = e;
-          if(!e.unavailable){ skipped.push(e.message); break; }        // the key itself was refused
+          if(e.unavailable) tell(e.message + ' — trying the next');
+          if(!e.unavailable){ skipped.push(e.message); tell(e.message + ' — trying the next'); break; }        // the key itself was refused
           if(e.status === 404) markBad(id, model);                      // this key cannot use that model
           if(e.limit){ rest(id, e.message); break; }                    // out of free quota: next service
         }

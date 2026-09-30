@@ -178,9 +178,6 @@ async function aiPlan(trip, c, issue, clicked){
   if(btn) btn.innerHTML = '<span class="spinner"></span> Working… (tap to stop)';
   if(st) st.textContent = '';
   // who will answer: shown while it works
-  const web0 = planState.web && Cloud.canSearch() && !Cloud.resting('gemini');
-  const first = (Cloud.aiStatus().find(x=>!x.resting) || {}).name || 'the AI';
-  const who = web0 ? 'Google Gemini' : first;
   Busy.start(issue && /^Fix these/.test(issue) ? 'Fixing the rule breaks with AI' : issue ? 'Changing the plan as you asked' : prev ? 'Re-planning with AI' : 'Planning with AI', ()=>planState.ctl && planState.ctl.abort());
   try{
     // what the internet says about the place, for the AI to plan with
@@ -208,13 +205,15 @@ async function aiPlan(trip, c, issue, clicked){
       (issue ? `\n\nThe traveller asks: "${issue}"\nChange the plan to do this, following the rules.` : '')}];
     // with a Gemini key the AI also searches the web (opening hours, closures, events on the dates); else it plans from the facts above
     const web = planState.web && Cloud.canSearch();
-    say(web ? `${who} is planning and searching the web — usually under a minute…` : `${who} is planning${/Ollama/.test(who) ? ' on this computer — this can take a few minutes' : ' — usually under a minute'}…`);
+    say('Asking the AI to plan…');
+    // the panel shows each step as it really happens: which AI is asked (and its model), which is skipped and why
+    const progress = (t, id) => Busy.step(t + (id === 'ollama' ? ' — on this computer this can take a few minutes' : id ? ' — usually under a minute' : ''));
     let r;
-    try{ r = await Cloud.chat(PLAN_SYSTEM(Rules.asPrompt(c.rules, {issues: !!issue})), turns, web ? {search: true, searchOptional: true} : {}, planState.ctl.signal); }
+    try{ r = await Cloud.chat(PLAN_SYSTEM(Rules.asPrompt(c.rules, {issues: !!issue})), turns, web ? {search: true, searchOptional: true, onProgress: progress} : {onProgress: progress}, planState.ctl.signal); }
     catch(e){
       if(!web || e.code === 'cancelled') throw e;
       say('Web search unavailable — planning from the facts…');
-      r = await Cloud.chat(PLAN_SYSTEM(Rules.asPrompt(c.rules, {issues: !!issue})), turns, {}, planState.ctl.signal);
+      r = await Cloud.chat(PLAN_SYSTEM(Rules.asPrompt(c.rules, {issues: !!issue})), turns, {onProgress: progress}, planState.ctl.signal);
     }
     if(r.sources && r.sources.length) used.push('web search (' + r.sources.length + ' sources)');
     say('Checking the plan against your rules…');
@@ -229,7 +228,7 @@ async function aiPlan(trip, c, issue, clicked){
       {sources: (r.sources || []).slice(0, 15).concat(know && know.guide ? [{title: 'Wikivoyage: ' + know.guide.title, url: know.guide.url}] : []), used});
     const probs = Rules.check({days}, c.rules, Object.assign({}, c, {weather: LOCAL_WEATHER[key]}));
     const left = probs.filter(p=>p.level === 'error').length;
-    Busy.done((issue ? 'Plan changed' : 'Plan ready') + ' — by ' + r.provider + (left ? ' · ' + left + ' rule break' + (left === 1 ? '' : 's') + ' left, see the checker' : ' · follows the rules'));
+    Busy.done((issue ? 'Plan changed' : 'Plan ready') + ' — by ' + r.provider + ' · ' + String(r.model).split('/').pop() + (r.noSearch ? ' (no web search: Gemini was busy)' : '') + (left ? ' · ' + left + ' rule break' + (left === 1 ? '' : 's') + ' left, see the checker' : ' · follows the rules'));
     if(j.summary) toast(j.summary);
   }catch(e){
     if(e && e.code === 'cancelled') Busy.done('Stopped — the plan is unchanged', true);

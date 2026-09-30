@@ -61,3 +61,16 @@ test('a model on this computer: the light one first, for every kind of task', ()
   assert.equal(C.rankModels('ollama', names, 'fast')[0], 'gemma3:4b');
   assert.equal(C.rankModels('ollama', ['qwen3:8b', 'llama3.1:8b', 'phi3:3.8b'], 'smart')[0], 'phi3:3.8b');
 });
+
+test('progress: says which AI is skipped and which is asked, as it happens', async ()=>{
+  store['tripvault-ai'] = JSON.stringify({keys: {gemini: 'g', groq: 'q'}, order: [], off: []});
+  store['tripvault-ai-rest'] = JSON.stringify({gemini: {until: Date.now() + 600000, why: 'free limit'}});
+  Object.assign(ctx, {AbortController, setTimeout, clearTimeout, JSON});
+  ctx.fetch = async (url, init) => /\/models/.test(url) && !init ? {ok: false, status: 500, json: async ()=>({}), text: async ()=>''}
+    : {ok: true, status: 200, json: async ()=>({choices: [{message: {content: '{"days":[]}'}}]}), text: async ()=>''};
+  const steps = [];
+  const r = await C.chat('plan', [{role: 'user', content: 'Dubai'}], {search: true, searchOptional: true, onProgress: (t, id)=>steps.push(t)});
+  assert.equal(r.provider, 'Groq');
+  assert.ok(steps.some(t=>/Google Gemini is at its free limit — skipping/.test(t)), steps.join(' / '));
+  assert.ok(steps.some(t=>/^Asking Groq · /.test(t)), steps.join(' / '));
+});
