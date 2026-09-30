@@ -602,7 +602,7 @@ async function start(){
 window.addEventListener('DOMContentLoaded', async function boot(){
   try{ applyTheme(localStorage.getItem('tripvault-theme') || ''); }catch(e){}
   await Promise.all([load(), loadReference()]);
-  if('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(()=>{});
+  if('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js', {updateViaCache: 'none'}).catch(()=>{});
   if(signedIn()) start(); else gate();
 });
 

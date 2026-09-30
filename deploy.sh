@@ -18,6 +18,10 @@ for f in index.html style.css parse.js rules.js cloud.js services.js core.js doc
 done
 cp data/airports.json data/airlines.json "$DEST/data/"
 
+# each publish stamps the app's files with its version, so browsers load the new ones at once (not a cached copy)
+REV0="$(git rev-parse --short HEAD)"
+sed -i '' -E "s#(src|href)=\"((/ai/)?[a-z]+\.(js|css))\"#\1=\"\2?v=$REV0\"#g" "$DEST/index.html"
+
 REV="$(git rev-parse --short HEAD)"
 cd "$SITE"
 git add tripManangement
