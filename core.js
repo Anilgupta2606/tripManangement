@@ -397,6 +397,9 @@ function openSettings(section){
   const card = openModal(`<h2>Settings</h2>
   <div class="settings">
     <details ${!section || section === 'ai' ? 'open' : ''}><summary>${icon('spark')} AI assistants</summary>
+      ${Cloud.central ? `<p class="muted">AI reads your documents, plans the itinerary and summarises the news. Its keys are shared by all your apps and set in one place.</p>
+      <p class="small">${Cloud.aiStatus().length ? 'Answering: ' + Cloud.aiStatus().map(x=>esc(x.name) + (x.model ? ' <em class="muted">(' + esc(x.model) + ')</em>' : '') + (x.resting ? ' — resting' : '')).join(' → ') : '<span class="warn-text">No AI key yet.</span>'}</p>
+      <a class="btn soft" href="/setup/#ai">${icon('spark')} AI keys and order — in Setup</a>` : `
       <p class="muted">Free AI keys read your documents, plan the itinerary and summarise the news. ${Cloud.central ? 'These are the <b>shared keys of all your apps</b> — the same in Money Home, the Ledger and the Expense Tracker. <a href="/ai/">Open the AI hub</a> to test them.' : 'Keys from your Expense Tracker / Ledger in this browser are used automatically.'}
       A <b>Google Gemini</b> key is the most useful: it reads photos and scans, and can search the web for live news and flight status.</p>
       <div class="keys">${Cloud.PROVIDERS.map(p=>`<label class="key-row"><span>${esc(p.name)} ${ai.from[p.id] && ['trip-vault', 'hub'].indexOf(ai.from[p.id]) < 0 ? `<em class="chip soft">from ${({ledger: 'Ledger', synced: 'your other device', 'expense-tracker': 'Expense Tracker'})[ai.from[p.id]] || ai.from[p.id]}</em>` : ''} <a href="${p.signupUrl}" target="_blank" rel="noopener" class="small">get a key</a></span>
@@ -407,6 +410,7 @@ function openSettings(section){
         <label class="check" style="align-self:end"><input type="checkbox" id="ai-fallback" ${ai.fallback ? 'checked' : ''}> If it fails or is out of quota, try the others</label>
       </div>
       <p class="muted small">${Cloud.aiStatus().length ? 'Tried in this order: ' + Cloud.aiStatus().map(x=>esc(x.name) + (x.model ? ' <em>(' + esc(x.model) + ')</em>' : '') + (x.resting ? ' — resting' : '')).join(' → ') + '. Each tries its best model first, then the next.' : 'No AI set up yet.'}</p>
+      `}
       <label>Document reader
         <select id="reader-mode">
           <option value="builtin-ai">Built-in reader first, then AI fills the gaps (recommended)</option>
@@ -420,7 +424,10 @@ function openSettings(section){
       <label>AirLabs key <a class="small" href="https://airlabs.co/signup" target="_blank" rel="noopener">get one</a><input id="k-al" type="password" autocomplete="off" value="${esc(fk.airlabs || '')}"></label>
     </details>
     <details ${section === 'sync' ? 'open' : ''}><summary>${icon('sync')} Phone ↔ laptop sync</summary>
-      ${Cloud.shared ? `<p class="notice-line">Tip: <a href="/setup/">Money Home → Setup</a> sets up sync, the sign-in and the AI keys for <b>all</b> your apps at once.</p>` : ''}
+      ${Cloud.shared ? `<p class="muted">Your trips and documents are encrypted on this device, then kept in a private GitHub Gist, so the phone and the laptop see the same vault.</p>
+      ${sync ? `<p>Sync is <b>on</b>${sync.syncedAt ? ' · last synced ' + esc(ago(sync.syncedAt)) : ''}${sync.lastError ? `<br><span class="err">${esc(sync.lastError)}</span>` : ''}</p>
+        <div class="row"><button class="btn primary" id="sync-now">${icon('sync')} Sync now</button><a class="btn ghost" href="/setup/#sync">Sync settings — in Setup</a></div>`
+      : `<p>Sync is <b>off</b> on this device.</p><a class="btn primary" href="/setup/#sync">${icon('sync')} Turn it on in Setup (once for all your apps)</a>`}` : `
       <p class="muted">Your trips and documents are encrypted on this device with a passphrase, then kept in private GitHub Gists. Use the same token and passphrase on the phone and they see the same vault. GitHub only ever holds unreadable data.</p>
       ${sync ? `<p>Sync is <b>on</b>${sync.syncedAt ? ' · last synced ' + esc(ago(sync.syncedAt)) : ''}${sync.lastError ? `<br><span class="err">${esc(sync.lastError)}</span>` : ''}</p>
         <label class="check"><input type="checkbox" id="share-keys" ${S.settings.shareKeys === false ? '' : 'checked'}> Carry my AI and flight keys to my other devices (inside the encrypted sync)</label>
@@ -429,6 +436,7 @@ function openSettings(section){
         <label>GitHub token (fine-grained, permission “Gists: read and write”) <a class="small" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">create</a><input id="s-token" type="password" autocomplete="off"></label>
         <label>Sync passphrase (the same on every device; it cannot be recovered)<input id="s-pass" type="password" autocomplete="new-password"></label>
         <button class="btn primary" id="sync-on">Turn on sync</button>`}
+      `}
     </details>
     <details ${section === 'people' ? 'open' : ''}><summary>${icon('user')} People</summary>
       <p class="muted">Whose documents: add everyone you travel with. New names from uploads are added here too.</p>
@@ -452,6 +460,8 @@ function openSettings(section){
   Cloud.loginSource().then(src=>{
     const n = $('login-note');
     if(!n) return;
+    if(Cloud.shared && src !== 'own'){ n.textContent = 'One sign-in for all your apps: your Expense Tracker username and password — change it there.'; return; }
+    if(Cloud.shared){ n.innerHTML = 'Turn on sync in <a href="/setup/#sync">Setup</a> and this device uses the same sign-in as your other device.'; return; }
     if(src === 'expense-tracker') n.textContent = 'You sign in with your Expense Tracker username and password — change it there.';
     else if(src === 'ledger') n.textContent = 'You sign in with your Ledger username and password — change it there.';
     else { n.textContent = S.settings.auth ? 'Change your Trip Vault sign-in:' : 'You are using admin / admin. Set your own:'; $('pw-f').hidden = false; }
@@ -466,10 +476,12 @@ function openSettings(section){
   card.querySelector('#person-f').onsubmit = e=>{ e.preventDefault(); const n = $('person-n').value.trim(); if(n){ addPerson(n); save(); openSettings('people'); } };
   card.querySelectorAll('[data-del-person]').forEach(b=>b.onclick = ()=>{ remove('people', b.dataset.delPerson); save(); openSettings('people'); });
   card.querySelector('#settings-save').onclick = ()=>{
-    const o = Cloud.aiLocal(); o.keys = o.keys || {};
-    card.querySelectorAll('[data-ai]').forEach(i=>{ const v = i.value.trim(); if(v) o.keys[i.dataset.ai] = v; else delete o.keys[i.dataset.ai]; });
-    o.first = $('ai-first').value; o.fallback = $('ai-fallback').checked;
-    Cloud.saveAiLocal(o);
+    if($('ai-first')){                         // the key editor (only in a copy without the shared Setup)
+      const o = Cloud.aiLocal(); o.keys = o.keys || {};
+      card.querySelectorAll('[data-ai]').forEach(i=>{ const v = i.value.trim(); if(v) o.keys[i.dataset.ai] = v; else delete o.keys[i.dataset.ai]; });
+      o.first = $('ai-first').value; o.fallback = $('ai-fallback').checked;
+      Cloud.saveAiLocal(o);
+    }
     S.settings.readerMode = $('reader-mode').value;
     S.settings.flightKeys = {aerodatabox: $('k-adb').value.trim(), airlabs: $('k-al').value.trim()};
     save({quiet: true});
