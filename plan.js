@@ -237,7 +237,7 @@ async function smallPlan(trip, c, know, issue, prev, progress, signal){
     let j;
     try{
       const res = await Cloud.chat(SMALL_SYSTEM, [{role: 'user', content: lines.join('\n')}],
-        {only: DEVICE_AI, maxTokens: 700, onProgress: (t, id)=>progress('Day ' + (i + 1) + ' of ' + days.length + ' — ' + t, id)}, signal);
+        {only: DEVICE_AI, maxTokens: 700, reason: !!issue, onProgress: (t, id)=>progress('Day ' + (i + 1) + ' of ' + days.length + ' — ' + t, id)}, signal);
       j = Cloud.json(res.text); last = res;
     }catch(e){ if(e.code === 'cancelled') throw e; failed++; continue; }
     const picks = (Array.isArray(j.picks) ? j.picks : []).slice(0, cap).map(p=>{
