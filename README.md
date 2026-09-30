@@ -4,7 +4,10 @@ Your trips in one place: tickets, boarding passes and hotel bookings (read for y
 planned to your rules, the news and safety situation at the destination, and live flight status. It works in
 the phone's browser as well as on the laptop, and can be installed to the home screen.
 
-**Live:** https://anilgupta2606.github.io/tripManangement/
+**Live:** https://anilgupta2606.github.io/tripManangement/ (also on the Money Home start page)
+
+**Publish a change:** commit here, then `./deploy.sh`. It runs the tests, copies the app into the Money Home
+site (`Anilgupta2606.github.io/tripManangement/`, which GitHub Pages already serves) and pushes it.
 
 ## Tabs
 
