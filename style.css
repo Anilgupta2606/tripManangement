@@ -500,3 +500,6 @@ fieldset.types p{ flex-basis: 100%; margin: 0; }
 .subtabs-bar a:hover{ color: var(--ink); }
 .subtabs-bar .n{ font-size: 12px; font-weight: 700; background: var(--surface-2); color: var(--muted); border-radius: 999px; padding: 1px 8px; }
 .subtabs-bar a.on .n{ background: var(--accent-soft); color: var(--accent); }
+
+.ctx-intro{ margin: 2px 0 -4px; }
+.ctx .chip b{ font-weight: 700; margin-right: 2px; }

@@ -51,10 +51,11 @@ VIEWS.plan = function(main, cur){
       <label>To<input type="date" id="p-end" value="${esc(ctx.end || '')}"></label>
       <label>Staying at<input id="p-hotel" list="p-hotels" value="${esc(ctx.hotel.name)}" placeholder="Hotel or area"><datalist id="p-hotels">${hotelsOf(cur.id).map(h=>`<option value="${esc(h.name)}">`).join('')}</datalist></label>
     </div>
+    <p class="ctx-intro small muted">The plan is built around these, from your tickets and booking:</p>
     <div class="ctx">
-      ${ctx.arrival ? `<span class="chip">🛬 ${esc(ctx.arrival.flight)} lands ${esc(fmtDate(ctx.arrival.date))} ${esc(ctx.arrival.arr || '')}</span>` : '<span class="chip soft">No arrival flight found</span>'}
-      ${ctx.departure ? `<span class="chip">🛫 ${esc(ctx.departure.flight)} leaves ${esc(fmtDate(ctx.departure.date))} ${esc(ctx.departure.dep || '')}${ctx.departure.international ? ' · international' : ''}</span>` : '<span class="chip soft">No departure flight found</span>'}
-      ${ctx.hotel.address ? `<span class="chip">🏨 <a href="${mapsLink(ctx.hotel.address)}" target="_blank" rel="noopener">${esc(ctx.hotel.address.slice(0, 60))}</a></span>` : ''}
+      ${ctx.arrival ? `<span class="chip"><b>Arrive</b> 🛬 ${esc(ctx.arrival.flight)} lands ${esc(fmtDate(ctx.arrival.date))} ${esc(ctx.arrival.arr || '')}</span>` : '<span class="chip soft"><b>Arrive</b> no arrival flight found</span>'}
+      ${ctx.departure ? `<span class="chip"><b>Leave</b> 🛫 ${esc(ctx.departure.flight)} departs ${esc(fmtDate(ctx.departure.date))} ${esc(ctx.departure.dep || '')}${ctx.departure.international ? ' · international' : ''}</span>` : '<span class="chip soft"><b>Leave</b> no departure flight found</span>'}
+      ${ctx.hotel.name || ctx.hotel.address ? `<span class="chip" title="Each day starts and ends here; nearby places are found around it"><b>Hotel</b> 🏨 ${esc(ctx.hotel.name || '')}${ctx.hotel.address ? `${ctx.hotel.name ? ' — ' : ''}<span class="muted">${esc(ctx.hotel.address.slice(0, 60))}</span> <a href="${mapsLink([ctx.hotel.name, ctx.hotel.address].filter(Boolean).join(', '))}" target="_blank" rel="noopener">Map</a>` : ''}</span>` : '<span class="chip soft"><b>Hotel</b> none yet — add the booking or type it in “Staying at”</span>'}
     </div>
     <div class="weather-strip" id="p-weather"></div>
     <div class="row">
