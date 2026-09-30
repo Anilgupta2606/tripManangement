@@ -552,3 +552,7 @@ label.tick span{ overflow-wrap: anywhere; }
 
 .ok-text{ color: var(--good); }
 .key-state{ margin: -4px 0 14px; }
+.read-checks{ list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 3px; }
+.read-checks li.fixed{ color: var(--good); }
+.read-checks li.warn{ color: var(--warn); }
+.read-checks li.error{ color: var(--bad); font-weight: 600; }

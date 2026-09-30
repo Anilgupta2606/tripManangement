@@ -334,7 +334,8 @@ function reviewForm(q){
       ${q.read.thumb ? `<img class="review-thumb" src="${q.read.thumb}" alt="">` : ''}
       <div><b>${esc(q.file.name)}</b> <span class="muted small">${fmtSize(q.file.size)}${q.read.pages > 1 ? ' · ' + q.read.pages + ' pages' : ''}</span>
       <div class="small reader-by">${icon('spark')} Read by ${esc(r.by)}${r.aiError ? ` <span class="warn-text">· AI reader unavailable: ${esc(r.aiError)}</span>` : ''}</div>
-      ${r.summary ? `<div class="small">${esc(r.summary)}</div>` : ''}</div></div>
+      ${r.summary ? `<div class="small">${esc(r.summary)}</div>` : ''}
+      ${(r.checks || []).length ? `<ul class="read-checks small">${r.checks.map(c=>`<li class="${c.level}">${c.level === 'fixed' ? '✓ Corrected: ' : c.level === 'error' ? '✗ Check: ' : '⚠ '}${esc(c.text)}</li>`).join('')}</ul>` : ''}</div></div>
     <div class="grid3">
       <label>Whose document<input list="people-dl-${q.id}" data-k="person" value="${esc(person)}" data-d="${esc(person)}" placeholder="Name"><datalist id="people-dl-${q.id}">${allPeople.map(p=>`<option value="${esc(p)}">`).join('')}</datalist></label>
       <label>Category <span class="muted small">(change it if it is wrong)</span><select data-k="type">${typeOptions(r.type)}</select></label>

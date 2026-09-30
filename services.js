@@ -213,7 +213,16 @@ const Reader = (function(){
 }`;
   const SYSTEM = `You read travel documents (tickets, boarding passes, hotel bookings, train tickets, visas) and personal documents (Aadhaar, PAN, passport, driving licence, voter ID, tax papers, bank statements, investment statements, insurance, property and rent papers, vehicle RC and PUC, medical, education, employment, bills and warranties) and return the facts as JSON. Pick the "type" that fits best.
 Answer with the JSON object only, in this shape (leave out fields that do not apply; never invent values; airports as IATA codes; 24-hour times; dates as YYYY-MM-DD):
-${SCHEMA}`;
+${SCHEMA}
+How to read — right and wrong, from real mistakes:
+- Copy numbers exactly as printed; never guess a digit you cannot read — leave "number" empty instead. Your number is checked (Aadhaar's check digit, PAN's pattern), so a guess is caught.
+  Aadhaar is 12 digits; a 16-digit number is the VID, not the Aadhaar. Text "Aadhaar 4991 1866 5246 VID 9134 5678 1234 5678" -> right "4991 1866 5246"; wrong "9134 5678 1234 5678".
+  PAN is 5 letters, 4 digits, 1 letter: right "ABCPG1234K"; wrong "ABCPG12S4K" (S is a misread 5).
+  A masked number stays masked: "XXXX XXXX 5246", not a made-up full number.
+- Indian dates are day/month/year: "DOB 03/04/1990" -> right "1990-04-03"; wrong "1990-03-04".
+- "person" is the holder or traveller, not the father, the guardian or the agent: "Name: ANIL GUPTA  Father's Name: RAKESH GUPTA" -> right "Anil Gupta"; wrong "Rakesh Gupta".
+- Airports are the flight's own: "New Delhi (DEL) T3 -> Mumbai (BOM) T1" -> from "DEL", to "BOM"; a city named in an address is not an airport.
+- A flight arriving after midnight keeps its own date for "date" (the departure day); do not move it.`;
   async function aiRead(read, built, opts){
     opts = opts || {};
     const text = String(read.text || '').slice(0, 16000);
@@ -245,8 +254,9 @@ ${SCHEMA}`;
     opts = opts || {};
     const built = Parse.read(read.text, read.barcode, {type: opts.type});
     const result = {type: built.type, fields: built.fields, title: '', person: '', summary: '', by: 'Built-in reader' + (read.method.length ? ' (' + read.method.join(' + ') + ')' : ''), confidence: built.confidence, aiError: ''};
-    if(mode === 'builtin' || !Cloud.aiAvailable()) return result;
-    if(mode === 'builtin-ai' && built.confidence >= 0.95 && !opts.forceAi) return result;    // a barcode is exact
+    const done = async () => { try{ result.checks = await checkReading(result, read, built); }catch(e){ result.checks = []; } return result; };
+    if(mode === 'builtin' || !Cloud.aiAvailable()) return done();
+    if(mode === 'builtin-ai' && built.confidence >= 0.95 && !opts.forceAi) return done();    // a barcode is exact
     try{
       if(opts.progress) opts.progress('The AI reader is reading it…');
       const ai = await aiRead(read, built, opts);
@@ -264,10 +274,60 @@ ${SCHEMA}`;
     }catch(e){
       result.aiError = e.message;
     }
+    try{ result.checks = await checkReading(result, read, built); }catch(e){ result.checks = []; }
     return result;
   }
 
-  return {readFile, understand, aiRead, mergeFields, openPdf, renderPage, imageCanvas, canvasB64};
+  /* ---------------------------------------------------------------- checking a reading (whoever read it)
+     Numbers checked by their exact rules (Aadhaar's check digit, PAN's pattern…), common misreads corrected, a wrong number
+     replaced by the right one found in the document's own text, dates and airports checked, a flight's usual route compared.
+     -> [{field, level: 'fixed'|'warn'|'error', text}] (and `result.fields` corrected in place) */
+  const NUMBER_KIND = {aadhaar: 'aadhaar', pan: 'pan', passport: 'passport', licence: 'licence', 'voter-id': 'voter-id', tax: 'pan'};
+  async function checkReading(result, read, built){
+    const B = typeof MoneyBrain !== 'undefined' ? MoneyBrain : null, out = [];
+    if(!B || !result || !result.fields) return out;
+    const f = result.fields, text = String((read && read.text) || '');
+    const today = new Date().toISOString().slice(0, 10), days = d => Math.round((Date.parse(d) - Date.parse(today)) / 86400000);
+    const say = (field, level, t) => out.push({field, level, text: t});
+    // the document's own number
+    const kind = NUMBER_KIND[result.type];
+    if(kind && f.number){
+      const v = B.verify(kind, f.number, {person: result.person});
+      if(v.ok){ if(v.fixed){ f.number = v.value; say('number', 'fixed', v.text); } else if(v.level === 'warn') say('number', 'warn', v.text); }
+      else {
+        // the other reader's number, or one in the text, that passes the check
+        const other = built && built.fields && built.fields.number && B.verify(kind, built.fields.number).ok ? B.verify(kind, built.fields.number).value : '';
+        const found = other || B.find(kind, text)[0];
+        if(found){ say('number', 'fixed', v.text + ' — replaced by ' + found + ', which passes the check' + (other ? ' (the built-in reader found it)' : ' (found in the document)')); f.number = found; }
+        else say('number', 'error', v.text + ' — please check it against the document');
+      }
+    } else if(kind && !f.number){ const found = B.find(kind, text)[0]; if(found){ f.number = found; say('number', 'fixed', 'The number was missing — found ' + found + ' in the document, and it passes the check'); } }
+    // dates
+    ['validUntil', 'issuedOn', 'checkIn', 'checkOut', 'date'].forEach(k=>{ if(f[k] && !B.realDate(f[k])){ say(k, 'error', 'Not a real date: ' + f[k]); delete f[k]; } });
+    if(f.validUntil && f.issuedOn && f.validUntil <= f.issuedOn) say('validUntil', 'error', 'Valid until (' + f.validUntil + ') is before it was issued (' + f.issuedOn + ')');
+    if(f.issuedOn && f.issuedOn > today) say('issuedOn', 'warn', 'Issued in the future (' + f.issuedOn + ')?');
+    if(f.validUntil && result.type !== 'other' && days(f.validUntil) < 0) say('validUntil', 'warn', 'Expired on ' + f.validUntil);
+    if(f.checkIn && f.checkOut){ const n = Math.round((Date.parse(f.checkOut) - Date.parse(f.checkIn)) / 86400000);
+      if(n <= 0) say('checkOut', 'error', 'Check-out (' + f.checkOut + ') is not after check-in (' + f.checkIn + ')'); else if(n > 60) say('checkOut', 'warn', n + ' nights — check the dates'); }
+    // flights: number, airports, date, and the route it usually flies
+    if(f.pnr){ const v = B.verify('pnr', f.pnr); if(!v.ok) say('pnr', 'warn', v.text); }
+    for(const [i, sgm] of (f.segments || []).entries()){
+      const tag = 'Flight ' + (sgm.flight || i + 1);
+      if(sgm.flight){ const v = B.verify('flight', sgm.flight); if(v.fixed){ sgm.flight = v.value; say('segments', 'fixed', tag + ': ' + v.text); } else if(!v.ok) say('segments', 'error', v.text); }
+      // only when the airport list is loaded (it is, in the app): an unknown code is then a misread
+      if(Parse.airport('DEL')) ['from', 'to'].forEach(k=>{ if(sgm[k] && !Parse.airport(sgm[k])) say('segments', 'error', tag + ': “' + sgm[k] + '” is not a known airport code'); });
+      if(sgm.date && !B.realDate(sgm.date)) say('segments', 'error', tag + ': not a real date (' + sgm.date + ')');
+      else if(sgm.date && (days(sgm.date) < -400 || days(sgm.date) > 700)) say('segments', 'warn', tag + ': the date ' + sgm.date + ' is far from today — check the year');
+      if(sgm.from && sgm.to && sgm.from === sgm.to) say('segments', 'error', tag + ': leaves from and lands at the same airport');
+      if(sgm.flight && sgm.from && sgm.to && typeof Flights !== 'undefined'){
+        const r = await Promise.race([Flights.route(sgm.flight), new Promise(res=>setTimeout(()=>res(null), 4000))]).catch(()=>null);
+        if(r && r.from && r.to && (r.from !== sgm.from || r.to !== sgm.to)) say('segments', 'warn', tag + ' usually flies ' + r.from + ' → ' + r.to + ', but this says ' + sgm.from + ' → ' + sgm.to + ' — check the number or the airports');
+      }
+    }
+    return out;
+  }
+
+  return {readFile, understand, aiRead, mergeFields, openPdf, renderPage, imageCanvas, canvasB64, checkReading};
 })();
 
 /* ================================================================ Geo + weather */
