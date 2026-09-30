@@ -40,6 +40,24 @@ const TripBrain = (function(){
     return out;
   }
 
+  /* Is it a place to visit? Wikipedia's one-line description says what a page is ("Buddhist temple in Bangkok",
+     "University in Bangkok", "Motor race", "Hotel in Singapore"). */
+  const VISIT = /\b(museum|gallery|temple|wat|shrine|mosque|church|cathedral|basilica|synagogue|monastery|palace|fort|fortress|castle|citadel|park|garden|zoo|aquarium|beach|island|lake|waterfall|market|bazaar|souk|mall|square|plaza|monument|memorial|landmark|tower|observation|viewpoint|bridge|statue|fountain|ruins?|archaeological|amphitheatre|stadium tour|old town|historic (district|site|house|building|quarter|neighbourhood)|heritage|attraction|theme park|amusement|water park|botanical|opera house|theatre|library|cemetery|tomb|mausoleum|gate|canal|harbour|pier|promenade|street market|night market|skyscraper|world heritage)\b/i;
+  const NOT_VISIT = /\b(hotel|resort|university|college|school|institute|academy|company|corporation|bank|headquarters|embassy|consulate|nunciature|ministry|government|agency|station|railway|metro|airport|hospital|clinic|office building|office|business|apartment|residential|housing|neighbourhood|neighborhood|district|ward|suburb|area|region|village in|town in|city in|road|street|highway|expressway|avenue|grand prix|race|festival|convention|con\b|election|bombing|attack|fire|disaster|riot|massacre|incident|war|battle|siege|treaty|empire|dynasty|era|period|organi[sz]ation|club|team|television|radio|newspaper|film|album|song|restaurant|shop|brand|retailer|company|politician|person|footballer|actor|singer|family|record label|software|video game|holiday|celebration|observance|new year|novel|book|poem|opera\b|play by|musical|painting|sculpture by|retail|discount store|convenience store|department store chain|shopping (centre|center|mall) chain|chain of|franchise|manga|anime|character|magazine)\b/i;
+  const ADULT = /\b(sex|erotic|lovemaking|red[- ]light|go-go|strip club|brothel|cabaret show|adult (show|entertainment))\b/i;
+  const EVENT = /\b(new year|festival|celebration|parade|marathon|grand prix|season)\b/i;
+  const PERSON = /\(\d{3,4}\s*[–-]\s*\d{3,4}\)|\b(born|died|politician|statesman|soldier|general|writer|poet|painter|king|queen|emperor|prince|princess|sultan|actor|actress|singer|musician|businessman|footballer|cricketer|scientist|philosopher|saint)\b/i;
+  function isPlace(name, desc, fromGuide, views, cat){
+    if(cat && /beaches|temples|shrines|churches|mosques|museums|parks|gardens|forts|castles|palaces|monuments|waterfalls/i.test(cat)) return !PERSON.test(desc || '');   // filed as one by Wikipedia
+    if(!desc) return fromGuide;                                             // the guide lists places; without a description, trust it
+    if(PERSON.test(desc)) return false;                                     // the page found is about a person of that name
+    // a skyscraper is a sight only when people come to see it (Burj Khalifa), not every office tower
+    if(/\b(skyscraper|office|tower block|high-rise)\b/i.test(desc) && !/observation|observatory|tallest|landmark/i.test(desc)) return (views || 0) > 20000;
+    if(VISIT.test(desc) && !/\b(hotel|university|station|school|office)\b/i.test(desc)) return true;
+    if(NOT_VISIT.test(desc)) return false;
+    return fromGuide;
+  }
+
   /* Every place worth considering, with a value and what we know of it. know: from Knowledge.gather */
   function candidates(know, ctx, prefs){
     const b = B(), out = [], seen = {};
@@ -48,12 +66,21 @@ const TripBrain = (function(){
     const add = (name, o) => {
       const k = norm(name);
       if(!k || seen[k]) { if(seen[k] && o.fame) seen[k].value += 0.15; return; }
-      const category = b.categoryOf(name, o.note);
+      const look = String(o.key || name).toLowerCase();
+      const desc = know && know.desc ? know.desc[look] || '' : '';
+      if(!isPlace(name, desc, o.source === 'guide', know && know.fame ? know.fame[look] : 0, o.cat)) return;
+      if(ADULT.test(name + ' ' + (o.note || '') + ' ' + desc) || EVENT.test(name)) return;              // a family planner: no adult venues; events are not places
+      const cat0 = b.categoryOf(name, o.note);
+      const category = cat0 !== 'sight' ? cat0 : b.categoryOf(desc, '') !== 'sight' ? b.categoryOf(desc, '') : b.categoryOf(o.cat || '', '');
       const pos = o.lat != null ? {lat: o.lat, lng: o.lng} : near[k] ? {lat: near[k].lat, lng: near[k].lng} : null;
       let value = o.base + (near[k] && o.base > 0.5 ? 0.15 : 0);                          // in the guide and near the hotel: well known
       const why = [];
       // how well known it is: Wikipedia readers in a month (Burj Khalifa ~125,000; a small museum ~900)
-      const views = know && know.fame ? know.fame[String(name).toLowerCase()] : undefined;
+      // readers of a page about this city's place count fully; a chain, brand or event page (Madame Tussauds, a store
+      // chain, a tennis tournament) is read worldwide, so its readers say nothing about this city
+      const local = new RegExp('\\b(' + [ctx.city, ctx.country, o.area].filter(Boolean).map(x=>String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')\\b', 'i');
+      const factor = !desc ? 0.8 : /\b(chain|franchise|brand|company|tournament|championship|series|event)\b/i.test(desc) ? 0 : local.test(desc) || local.test(name) ? 1 : 0.5;
+      const views = know && know.fame && know.fame[look] !== undefined ? Math.round(know.fame[look] * factor) : undefined;
       if(views > 0){ const f = Math.max(-0.1, Math.min(0.9, (Math.log10(views) - 3) * 0.4)); value += f; if(f >= 0.5) why.push('one of the best-known sights here'); }
       if(prefs.cat[category]){ value += prefs.cat[category]; why.push(prefs.why[category]); }
       if(prefs.kids && /animals|fun|beach|park/.test(category)){ value += 0.3; why.push('good with children'); }
@@ -63,7 +90,7 @@ const TripBrain = (function(){
       const c = {id: 'c' + out.length, name, category, kind: KIND[category] || 'sight', lat: pos ? pos.lat : null, lng: pos ? pos.lng : null,
         minutes: Math.round((MINUTES[category] || 75) * (prefs.lessWalking && /market|park|museum/.test(category) ? 0.8 : 1)), flex: 45,
         hours: b.parseHours(o.hours), hoursText: o.hours || '', outdoor: !!OUTDOOR[category] && !/aquarium|dolphinarium|indoor|museum|mall|cinema|ski dubai/i.test(name), note: o.note || '', area: o.area || '', price: o.price || '',
-        value, why, source: o.source, km: hotel && pos ? b.km(hotel, pos) : null};
+        value, why, source: o.source, km: hotel && pos ? b.km(hotel, pos) : null, views: views || 0};
       if(c.km != null && c.km > 60) return;                                                    // another city
       if(value >= 1.3) c.flex = 0;                                                              // a top sight gets its full time, never squeezed
       seen[k] = c; out.push(c);
@@ -76,7 +103,10 @@ const TripBrain = (function(){
       else if(l.kind === 'do') add(l.name, Object.assign({base: 0.85, source: 'guide'}, l));
       else if(l.kind === 'buy' && /market|mall/.test(b.categoryOf(l.name, l.note))) add(l.name, Object.assign({base: 0.6, source: 'guide'}, l));
     });
-    ((know && know.nearby) || []).forEach(p=>{ const cat = b.categoryOf(p.name); add(p.name, {base: cat === 'sight' ? 0.25 : 0.55, lat: p.lat, lng: p.lng, source: 'nearby'}); });
+    // the city's attractions as Wikipedia files them (with map positions): a place to visit when its description says so
+    ((know && know.attractions) || []).forEach(a=>{ add(a.name.replace(/,\s*[A-Z][a-z]+$/, '').replace(/\s*\([^)]*\)$/, ''), {base: 0.55, lat: a.lat, lng: a.lng, source: 'attractions', note: '', key: a.name, cat: a.cat}); });
+    // places near the hotel from Wikipedia: only the ones its description calls a place to visit
+    ((know && know.nearby) || []).forEach(p=>{ const cat = b.categoryOf(p.name, (know.desc || {})[p.name.toLowerCase()] || ''); add(p.name, {base: cat === 'sight' ? 0.35 : 0.55, lat: p.lat, lng: p.lng, source: 'nearby'}); });
     return out;
   }
   /* Places to eat, with their positions (for "near where you are at lunch"). */
@@ -85,7 +115,7 @@ const TripBrain = (function(){
     return ((know && know.guide ? know.guide.listings : [])).filter(l=>l.kind === 'eat' || l.kind === 'drink' && /cafe|coffee|tea/i.test(l.name + l.note))
       .map(l=>({name: l.name, lat: l.lat, lng: l.lng, note: l.note || '', price: l.price || '', area: l.area || '', hours: B().parseHours(l.hours),
         veg: /\b(veg|vegetarian|vegan|jain|saravana|sangeetha|udupi|dosa|thali|south indian)\b/i.test(l.name + ' ' + l.note) && !/non[- ]?veg/i.test(l.note)}))
-      .map(e=>Object.assign(e, {fit: veg ? (e.veg ? 1 : 0.2) : 1}));
+      .map(e=>Object.assign(e, {fit: (veg ? (e.veg ? 1 : 0.2) : 1) * (/gelat|ice ?cream|sweets?\b|dessert|bakery|patisserie|lassi|juice|chocolat|pastry|donut|doughnut|bubble tea|station\b/i.test(e.name + ' ' + e.note) ? 0.15 : 1)}));
   }
 
   /* The whole stay, day by day. ctx: planContext (dates, arrival, departure, hotel, rules, city);
@@ -103,6 +133,13 @@ const TripBrain = (function(){
     const days = Ru.clean({days: sk.days}, locked).days;
     const all = candidates(know, ctx, prefs), food = eateries(know, prefs);
     const used = new Set(), ate = new Set();
+    // the trip's must-sees: the best-known places (by Wikipedia readers), about two for every full day - planned
+    // first, as the anchors of the days, so a famous place is never left out for a lesser one nearer the hotel
+    const fullDays = Math.max(1, days.length - (ctx.arrival ? 1 : 0) - (ctx.departure ? 1 : 0));
+    const views = c => c.views || 0;
+    const must = all.filter(c=>c.value > 0 && c.lat != null && (c.km == null || c.km < 35) && views(c) > 2000)
+      .sort((a, b)=>views(b) - views(a)).slice(0, Math.min(14, fullDays * 2 + 1));
+    const mustIds = new Set(must.map(c=>c.id));
     (locked ? locked.days : []).forEach(d=>d.items.forEach(i=>used.add(norm(i.place || i.title).split(' ').slice(0, 3).join(' '))));
     const isUsed = c => used.has(norm(c.name).split(' ').slice(0, 3).join(' '));
     // arrival day: light (one place when relaxed, two otherwise); every day: what fits its hours
@@ -129,8 +166,11 @@ const TripBrain = (function(){
         const left = all.filter(c=>!isUsed(c) && c.value > 0 && (c.km == null || c.km < 35));
         const arrivalDay = ctx.arrival && ctx.arrival.date === day.date, lastDay = ctx.departure && ctx.departure.date === day.date;
         const pool = left.filter(c=>!(arrivalDay || lastDay) || c.km == null || c.km < 4);
-        const anchor = pool.slice().sort((a, b)=>b.value - a.value)[0];
-        const dayCands = pool.map(c=>Object.assign({}, c, {value: c.value - (anchor && c.lat != null && anchor.lat != null ? 0.07 * b.km(anchor, c) : 0.15)}))
+        // the day's anchor: the best-known must-see not yet planned (open that day); else the best place left
+        const openThatDay = c => { const h = c.hours && c.hours.days[new Date(day.date + 'T00:00:00Z').getUTCDay()]; return !h || h.length > 0; };
+        const anchor = pool.filter(c=>mustIds.has(c.id) && openThatDay(c)).sort((a, b)=>views(b) - views(a))[0] || pool.slice().sort((a, b)=>b.value - a.value)[0];
+        const dayCands = pool.map(c=>Object.assign({}, c, {value: c.value + (mustIds.has(c.id) ? 0.6 : 0) + (anchor && c.id === anchor.id ? 0.5 : 0)
+            - (anchor && c.lat != null && anchor.lat != null ? 0.07 * b.km(anchor, c) : 0.15)}))
           .sort((a, b)=>b.value - a.value).slice(0, 24);
         const res = b.planDay({date: day.date, window: w, start: hotel, busy, candidates: dayCands, max, buffer: r.bufferMin,
           valueAt: (c, s) => {
@@ -202,10 +242,10 @@ const TripBrain = (function(){
 
   /* "Not happy with it?" typed in plain words -> changes to the rules and lessons, and what to tell you.
      -> {rules (new), fixed: [{date, item}], free: [{date, part}], said: [text], understood: bool} */
-  function apply(text, ctx, days){
+  function apply(text, ctx, days, given){
     const b = B(), out = {rules: Object.assign({}, ctx.rules || {}), fixed: [], free: [], said: [], understood: false};
     delete out.rules.custom;
-    const acts = b.understand(text);
+    const acts = given || b.understand(text, {app: 'trip'});
     const dayOf = ref => {
       if(!ref || !days || !days.length) return null;
       if(ref.day) return (ref.day === -1 ? days[days.length - 1] : days[ref.day - 1]) || null;
@@ -255,6 +295,42 @@ const TripBrain = (function(){
     }
   }
 
-  return {preferences, candidates, eateries, plan, apply, freeBlock, learnFromEdit, ampm};
+  /* The AI as a translator, not a planner: a request Money Brain could not read becomes its own actions (checked
+     here, so a wrong answer cannot do harm), and the words are remembered for next time. -> actions or [] */
+  const ACTION_SYSTEM = cats => `You turn a traveller's request about their trip plan into actions. Answer with JSON only: {"actions":[...]}, using only these forms:
+{"do":"pace","value":"relaxed"|"packed","day":{"day":N}|null}
+{"do":"food","value":"vegetarian"|"vegan"|"jain vegetarian"|"halal"}
+{"do":"like"|"dislike","category":${cats.map(c=>'"' + c + '"').join('|')}|"food"}
+{"do":"fixed","title":"short name","min":minutes after midnight,"minutes":60,"day":{"day":N}|{"date":D}}
+{"do":"free","part":"morning"|"afternoon"|"evening"|"day","day":{"day":N}|{"date":D}|null}
+{"do":"dayStart","min":minutes after midnight} or {"do":"dayStart","shift":60|-60}
+{"do":"dayEnd","min":minutes after midnight} or {"do":"dayEnd","shift":60|-60}
+{"do":"walking","value":"less"}
+{"do":"travellers","value":"with children"}
+Day N counts from 1 (-1 = the last day); D is the day of the month. If the request is about something else (a named place, a question, thanks), answer {"actions":[]}.`;
+  function checkActions(list){
+    const b = B(), cats = b.CATEGORIES.map(c=>c.id).concat(['food']);
+    const okDay = d => d === null || d === undefined || (d && (Number.isInteger(d.day) || Number.isInteger(d.date)));
+    return (Array.isArray(list) ? list : []).filter(a=>a && typeof a === 'object').filter(a=>{
+      if(a.do === 'pace') return /^(relaxed|packed)$/.test(a.value) && okDay(a.day);
+      if(a.do === 'food') return /^(vegetarian|vegan|jain vegetarian|halal)$/.test(a.value);
+      if(a.do === 'like' || a.do === 'dislike') return cats.indexOf(a.category) >= 0;
+      if(a.do === 'fixed') return a.title && Number.isInteger(a.min) && a.min >= 0 && a.min < 1440 && okDay(a.day) && a.day;
+      if(a.do === 'free') return /^(morning|afternoon|evening|day)$/.test(a.part) && okDay(a.day);
+      if(a.do === 'dayStart' || a.do === 'dayEnd') return (Number.isInteger(a.min) && a.min > 0 && a.min < 1440) || a.shift === 60 || a.shift === -60;
+      if(a.do === 'walking') return a.value === 'less';
+      if(a.do === 'travellers') return a.value === 'with children';
+      return false;
+    }).map(a=>Object.assign({}, a, {minutes: a.do === 'fixed' ? Math.max(30, Math.min(240, +a.minutes || 60)) : undefined}));
+  }
+  async function translate(text, chat, json){
+    const b = B();
+    const r = await chat(ACTION_SYSTEM(b.CATEGORIES.map(c=>c.id)), [{role: 'user', content: text}], {tier: 'fast', maxTokens: 400});
+    const acts = checkActions((json(r.text) || {}).actions);
+    if(acts.length) b.rememberPhrase('trip', text, acts);
+    return {acts, by: r.provider};
+  }
+
+  return {preferences, candidates, eateries, plan, apply, freeBlock, learnFromEdit, ampm, translate, checkActions};
 })();
 if(typeof module !== 'undefined') module.exports = TripBrain;

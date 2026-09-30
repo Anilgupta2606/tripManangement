@@ -91,3 +91,22 @@ test('learning from edits: removing souks twice, then the plan skips them', {ski
   assert.equal(said.fixed[0].date, '2026-12-24');
   assert.equal(said.fixed[0].item.start, '15:00');
 });
+
+test('an unread request: the AI translates it, bad parts are dropped, and the words are remembered', {skip: !have && 'no brain'}, async ()=>{
+  MoneyBrain._reset();
+  const text = 'we fancy a bit of culture and nothing too sweaty';
+  assert.deepEqual(MoneyBrain.understand(text, {app: 'trip'}), []);
+  let asked = 0;
+  const chat = async ()=>{ asked++; return {provider: 'Fake AI', text: JSON.stringify({actions: [
+    {do: 'like', category: 'museum'}, {do: 'pace', value: 'relaxed', day: null},
+    {do: 'like', category: 'casino'},                 // not a kind it knows: dropped
+    {do: 'delete everything'},                        // not an action: dropped
+    {do: 'fixed', title: 'x', min: 5000, day: {day: 1}},   // impossible time: dropped
+  ]})}; };
+  const tr = await TripBrain.translate(text, chat, JSON.parse);
+  assert.equal(asked, 1);
+  assert.deepEqual(tr.acts.map(a=>a.do + ':' + (a.category || a.value)), ['like:museum', 'pace:relaxed']);
+  // next time: read from memory, no AI
+  assert.deepEqual(MoneyBrain.understand(text, {app: 'trip'}).map(a=>a.do + ':' + (a.category || a.value)), ['like:museum', 'pace:relaxed']);
+  assert.deepEqual(MoneyBrain.understand('We fancy a bit of culture, and nothing too sweaty!', {app: 'trip'}).map(a=>a.do), ['like', 'pace'], 'the same words, other punctuation');
+});

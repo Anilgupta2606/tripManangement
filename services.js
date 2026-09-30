@@ -545,26 +545,51 @@ const Knowledge = (function(){
   const clean = t => String(t || '').replace(/\[\[(?:[^|\]]*\|)?([^\]]*)\]\]/g, '$1').replace(/\[https?:\S+\s([^\]]*)\]/g, '$1').replace(/'{2,}/g, '')
     .replace(/<[^>]+>/g, '').replace(/\{\{[^{}]*\}\}/g, '').replace(/={2,}\s*([^=]+?)\s*={2,}/g, '$1:')
     .replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
+  /* A listing's fields. A "|" inside a link or template ([[Paris/1st#Q1|Louvre]]) is not a field break. */
   function fields(body){
-    const out = {};
-    body.split(/\n?\s*\|\s*/).forEach(part=>{ const m = /^([a-z]+)\s*=\s*([\s\S]*)$/i.exec(part.trim()); if(m) out[m[1].toLowerCase()] = clean(m[2]); });
+    const out = {}, parts = [];
+    let depth = 0, cur = '';
+    for(let i = 0; i < body.length; i++){
+      const two = body.slice(i, i + 2);
+      if(two === '[[' || two === '{{'){ depth++; cur += two; i++; continue; }
+      if((two === ']]' || two === '}}') && depth > 0){ depth--; cur += two; i++; continue; }
+      if(body[i] === '|' && depth === 0){ parts.push(cur); cur = ''; continue; }
+      cur += body[i];
+    }
+    parts.push(cur);
+    parts.forEach(part=>{ const m = /^\s*([a-z]+)\s*=\s*([\s\S]*)$/i.exec(part); if(m) out[m[1].toLowerCase()] = clean(m[2]); });
     return out;
   }
+  // Wikipedia and Wikivoyage ask busy callers to slow down: wait and try again (twice) instead of giving up
+  async function getJson(url){
+    for(let i = 0; i < 3; i++){
+      try{
+        const res = await fetch(url);
+        if(res.status === 429 || res.status >= 500) throw new Error('busy ' + res.status);
+        const d = await res.json();
+        if(d && d.error && /ratelimit|maxlag|toomany/i.test(d.error.code || '')) throw new Error('busy');
+        return d;
+      }catch(e){ if(i === 2) throw e; await new Promise(r=>setTimeout(r, 1200 * (i + 1))); }
+    }
+  }
   async function wikivoyage(page){
-    const res = await fetch('https://en.wikivoyage.org/w/api.php?action=parse&prop=wikitext&format=json&origin=*&redirects=1&page=' + encodeURIComponent(page));
-    const d = await res.json();
+    const d = await getJson('https://en.wikivoyage.org/w/api.php?action=parse&prop=wikitext&format=json&origin=*&redirects=1&page=' + encodeURIComponent(page));
     return d.parse ? {title: d.parse.title, text: d.parse.wikitext['*']} : null;
   }
   /* -> {title, listings:[{kind, name, hours, price, note}], advice:{'Get around', 'Stay safe', ...}} */
   function listingsOf(text, area, max){
-    const out = [];
-    const re = /\{\{\s*(see|do|eat|drink|buy)\s*\|([\s\S]*?)\}\}/gi;          // sights, things to do, food, drink, shopping
+    const out = [], per = {};
+    const cap = {see: max, do: max, buy: Math.ceil(max / 2), eat: Math.ceil(max * 0.6), drink: Math.ceil(max / 3)};
+    const re = /\{\{\s*(see|do|eat|drink|buy|listing)\s*\|([\s\S]*?)\}\}/gi;          // sights, things to do, food, drink, shopping (and the general {{listing|type=…}})
     let m;
-    while((m = re.exec(text)) && out.length < max){
+    while((m = re.exec(text))){
       const f = fields(m[2]);
-      if(!f.name) continue;
+      const kind = m[1].toLowerCase() === 'listing' ? String(f.type || '').toLowerCase() : m[1].toLowerCase();
+      if(!cap[kind]) continue;
+      if(!f.name || (per[kind] = (per[kind] || 0) + 1) > cap[kind]) continue;
       const lat = parseFloat(f.lat), lng = parseFloat(f.long || f.lon || f.lng);
-      out.push({kind: m[1].toLowerCase(), name: f.name, hours: f.hours || '', price: f.price || '', note: (f.content || '').slice(0, 160), area: area || '', lat: isFinite(lat) ? lat : null, lng: isFinite(lng) ? lng : null});
+      out.push({kind: m[1].toLowerCase(), name: f.name, hours: f.hours || '', price: f.price || '', note: (f.content || '').slice(0, 160), area: area || '', lat: isFinite(lat) ? lat : null, lng: isFinite(lng) ? lng : null,
+        wiki: (f.wikipedia || '').replace(/_/g, ' ').trim()});
     }
     return out;
   }
@@ -575,14 +600,26 @@ const Knowledge = (function(){
     const page = await wikivoyage(city).catch(()=>null);
     if(!page) return cache[k] = null;
     let listings = listingsOf(page.text, '', 60);
-    // a big city keeps its places in district pages ("Dubai/Bur Dubai", "Dubai/Deira"): read up to four, the hotel's first
-    if(listings.length < 10){
+    // a big city keeps most of its places in district pages ("Rome/Colosseo", "London/Bloomsbury"): read up to ten,
+    // the hotel's own first, then in the guide's order (it lists the central ones first)
+    {
       const esc = page.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const subs = Array.from(new Set((page.text.match(new RegExp('\\[\\[' + esc + '/[^\\]|#]+', 'g')) || []).map(x=>x.slice(2))));
       const here = String(near || '').toLowerCase();
       subs.sort((a, b)=>(here.indexOf(b.split('/').pop().toLowerCase()) >= 0) - (here.indexOf(a.split('/').pop().toLowerCase()) >= 0));
-      const pages = await Promise.all(subs.slice(0, 4).map(t=>wikivoyage(t).catch(()=>null)));
-      pages.forEach(p=>{ if(p) listings = listings.concat(listingsOf(p.text, p.title.split('/').pop(), 45)); });
+      const pages = await Promise.all(subs.slice(0, 14).map(t=>wikivoyage(t).catch(()=>null)));
+      pages.forEach(p=>{ if(p) listings = listings.concat(listingsOf(p.text, p.title.split('/').pop(), 70)); });
+    }
+    // still thin: a region whose places are on its towns' pages ("Goa" -> Panaji, Old Goa, Calangute, Anjuna)
+    if(listings.filter(l=>l.kind === 'see' || l.kind === 'do').length < 15){
+      const sec = /\n==\s*(Cities|Towns|Other destinations|Regions)\s*==([\s\S]*?)(?=\n==[^=]|$)/gi;
+      const towns = [];
+      let sm;
+      while((sm = sec.exec(page.text))) (sm[2].match(/\[\[([^\]|#]+)/g) || []).forEach(x=>{ const t = x.slice(2).trim(); if(towns.indexOf(t) < 0 && !/^(File|Image|Category):/i.test(t)) towns.push(t); });
+      const here = String(near || '').toLowerCase();
+      towns.sort((a, b)=>(here.indexOf(b.toLowerCase()) >= 0) - (here.indexOf(a.toLowerCase()) >= 0));
+      const pages = await Promise.all(towns.slice(0, 8).map(t=>wikivoyage(t).catch(()=>null)));
+      pages.forEach(p=>{ if(p) listings = listings.concat(listingsOf(p.text, p.title, 40)); });
     }
     const advice = {};
     ['See', 'Do', 'Eat', 'Get around', 'Stay safe', 'Respect', 'Cope'].forEach(h=>{
@@ -608,15 +645,65 @@ const Knowledge = (function(){
       const part = list.slice(i, i + 50);
       const k = 'f:' + part.join('|');
       try{
-        const d = cache[k] || (cache[k] = await (await fetch('https://en.wikipedia.org/w/api.php?action=query&prop=pageviews&pvipdays=30&redirects=1&format=json&origin=*&titles=' + encodeURIComponent(part.join('|')))).json());
-        const q = d.query || {}, back = {};
-        (q.normalized || []).concat(q.redirects || []).forEach(r=>{ back[r.to] = (back[r.from] || r.from); });
-        Object.values(q.pages || {}).forEach(p=>{ if(p.missing !== undefined) return; const v = Object.values(p.pageviews || {}).reduce((s, x)=>s + (x || 0), 0); out[String(back[p.title] || p.title).toLowerCase()] = v; });
+        // Wikipedia gives the readers of only some pages per answer: follow "continue" until all are in
+        let cont = {}, rounds = 0;
+        do{
+          const url = 'https://en.wikipedia.org/w/api.php?action=query&prop=pageviews|description&pvipdays=30&redirects=1&format=json&origin=*&titles=' + encodeURIComponent(part.join('|'))
+            + Object.entries(cont).map(([a, b])=>'&' + a + '=' + encodeURIComponent(b)).join('');
+          const d = cache[k + url.length + rounds] || (cache[k + url.length + rounds] = await getJson(url));
+          const q = d.query || {}, froms = {};
+          (q.normalized || []).concat(q.redirects || []).forEach(r=>{ (froms[r.to] = froms[r.to] || []).push(r.from); (froms[r.from] || []).forEach(f=>froms[r.to].push(f)); });
+          Object.values(q.pages || {}).forEach(p=>{ if(p.missing !== undefined) return;
+            const v = Object.values(p.pageviews || {}).reduce((s, x)=>s + (x || 0), 0);
+            [p.title].concat(froms[p.title] || []).forEach(t=>{ const key = String(t).toLowerCase();
+              if(p.pageviews) out[key] = Math.max(out[key] || 0, v);
+              if(p.description) (out._desc = out._desc || {})[key] = p.description; }); });
+          cont = d.continue && d.continue.pvipcontinue ? {pvipcontinue: d.continue.pvipcontinue, continue: d.continue.continue} : null;
+        } while(cont && ++rounds < 12);
       }catch(e){}
     }
     return out;
   }
-  /* Everything for a stay: -> {loc, hotelLoc, guide, nearby, fame, used:[what was found]} */
+  /* A city's attractions as Wikipedia files them ("Tourist attractions in Bangkok" and its temples, museums, parks,
+     beaches, historic sites…), each with its map position, readers in the last 30 days and what it is.
+     -> [{name, lat, lng, views, desc}] (within 40 km of `near`) */
+  const WANT_SUB = /temples|museums|parks|beaches|churches|cathedrals|historic|castles|palaces|squares|monuments|shrines|mosques|forts|gardens|landmarks|markets|towers|zoos|aquariums|waterfalls|bridges|district|attractions in/i;
+  async function attractions(city, near){
+    const k = 'a:' + city.toLowerCase();
+    if(cache[k]) return cache[k];
+    const members = async cat => { try{ const d = await getJson('https://en.wikipedia.org/w/api.php?action=query&list=categorymembers&cmlimit=200&cmnamespace=0|14&format=json&origin=*&cmtitle=' + encodeURIComponent(cat)); return (d.query || {}).categorymembers || []; }catch(e){ return []; } };
+    const top = await members('Category:Tourist attractions in ' + city);
+    const subs = top.filter(x=>x.ns === 14 && WANT_SUB.test(x.title) && !/festival|lists? of|restaurant|hotel|theatre|event/i.test(x.title)).slice(0, 16);
+    const more = await Promise.all(subs.map(x=>members(x.title)));
+    // the category a page came from says what it is ("Beaches of Goa": a beach, even when its page is about the village)
+    const kindOf = {};
+    more.forEach((list, i)=>list.forEach(x=>{ if(x.ns === 0 && !kindOf[x.title]) kindOf[x.title] = subs[i].title.replace(/^Category:/, ''); }));
+    const titles = Array.from(new Set(top.concat(...more).filter(x=>x.ns === 0).map(x=>x.title))).slice(0, 400);
+    const out = [];
+    for(let i = 0; i < titles.length; i += 50){
+      const part = titles.slice(i, i + 50);
+      let cont = {}, rounds = 0;
+      const got = {};
+      do{
+        try{
+          const url = 'https://en.wikipedia.org/w/api.php?action=query&prop=coordinates|pageviews|description&pvipdays=30&colimit=50&format=json&origin=*&titles=' + encodeURIComponent(part.join('|'))
+            + Object.entries(cont).map(([a, b])=>'&' + a + '=' + encodeURIComponent(b)).join('');
+          const d = await getJson(url);
+          Object.values((d.query || {}).pages || {}).forEach(p=>{
+            const g = got[p.title] = got[p.title] || {name: p.title};
+            if(p.coordinates && p.coordinates[0]){ g.lat = p.coordinates[0].lat; g.lng = p.coordinates[0].lon; }
+            if(p.pageviews) g.views = Math.max(g.views || 0, Object.values(p.pageviews).reduce((s, x)=>s + (x || 0), 0));
+            if(p.description) g.desc = p.description;
+          });
+          cont = d.continue ? Object.fromEntries(Object.entries(d.continue)) : null;
+        }catch(e){ cont = null; }
+      } while(cont && ++rounds < 12);
+      Object.values(got).forEach(g=>{ g.cat = kindOf[g.name] || ''; out.push(g); });
+    }
+    const R = (a, b) => { const r = x => x * Math.PI / 180; const h = Math.sin(r(b.lat - a.lat) / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(r(b.lng - a.lng) / 2) ** 2; return 12742 * Math.asin(Math.sqrt(h)); };
+    return cache[k] = out.filter(g=>g.lat != null && (!near || R(near, g) < 40) && (g.views || 0) > 200);
+  }
+  /* Everything for a stay: -> {loc, hotelLoc, guide, nearby, attractions, fame, desc, used:[what was found]} */
   async function gather(city, country, hotel){
     const used = [];
     let hotelLoc = null;
@@ -625,6 +712,7 @@ const Knowledge = (function(){
     // the guide for the hotel's own town too (a state or region page has few listings: "Goa" vs "Candolim")
     const town = hotelLoc && hotelLoc.city && hotelLoc.city.toLowerCase() !== city.toLowerCase() ? hotelLoc.city : '';
     const near = [hotel && hotel.address, hotel && hotel.name, hotelLoc && hotelLoc.label].filter(Boolean).join(' ');
+    const attrP = attractions(city, loc).catch(()=>[]);
     const [g0, gTown, n] = await Promise.all([guide(city, near).catch(()=>null), town ? guide(town, near).catch(()=>null) : null, loc ? nearby(loc).catch(()=>[]) : []]);
     let g = g0;
     if(gTown && gTown.listings.length){
@@ -634,9 +722,16 @@ const Knowledge = (function(){
     }
     if(g && (g.listings.length || Object.keys(g.advice).length)) used.push('travel guide (' + (g.listings.length ? g.listings.length + ' places' : 'advice') + ')');
     if(n.length) used.push(n.length + ' places near ' + (hotelLoc ? 'the hotel' : 'the centre'));
-    const fm = await fame(((g && g.listings) || []).filter(l=>l.kind !== 'eat' && l.kind !== 'drink').map(l=>l.name).concat(n.map(p=>p.name))).catch(()=>({}));
+    // how well known each place is, and what it is: its own Wikipedia page (the guide names it; else the same name)
+    const pairs = ((g && g.listings) || []).filter(l=>l.kind !== 'eat' && l.kind !== 'drink').map(l=>[l.name, l.wiki || l.name]).concat(n.map(p=>[p.name, p.name]));
+    const fm0 = await fame(pairs.map(p=>p[1])).catch(()=>({}));
+    const fm = {}, desc = {};
+    pairs.forEach(([name, title])=>{ const t = title.toLowerCase(); if(fm0[t] !== undefined) fm[name.toLowerCase()] = fm0[t]; if(fm0._desc && fm0._desc[t]) desc[name.toLowerCase()] = fm0._desc[t]; });
     if(Object.keys(fm).length) used.push('how well known each place is (Wikipedia readers)');
-    return {loc, hotelLoc, guide: g, nearby: n, fame: fm, used};
+    const attr = await attrP;
+    attr.forEach(a=>{ const key = a.name.toLowerCase(); if(a.views) fm[key] = Math.max(fm[key] || 0, a.views); if(a.desc && !desc[key]) desc[key] = a.desc; });
+    if(attr.length) used.push(attr.length + ' attractions Wikipedia lists for ' + city);
+    return {loc, hotelLoc, guide: g, nearby: n, attractions: attr, fame: fm, desc, used};
   }
   /* The facts, short enough for any model's prompt. */
   function forPrompt(k){
@@ -647,5 +742,5 @@ const Knowledge = (function(){
     if(k.nearby.length) out.push('Notable places near ' + (k.hotelLoc ? 'the hotel' : 'the city centre') + ' (km): ' + k.nearby.slice(0, 35).map(p=>p.name + ' ' + p.km).join(', '));
     return out.join('\n\n').slice(0, 9000);
   }
-  return {guide, nearby, gather, forPrompt, fame};
+  return {guide, nearby, gather, forPrompt, fame, attractions};
 })();

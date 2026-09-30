@@ -413,6 +413,22 @@ async function askChange(trip, c, text){
       return brainPlan(trip, c, text);
     }
     if(!Cloud.aiAvailable()) return toast('Not understood without AI. Try: “day 2 is too packed”, “we are vegetarian”, “no temples”, “more museums”, “meeting on the 24th at 3 pm”, “keep the evening free on day 3”.', 'error');
+    // not read here: the AI only translates it into Money Brain's actions (quick), and the words are remembered
+    try{
+      Busy.start('Working out what you mean', null); Busy.step('Asking the AI to translate the request…');
+      const tr = await TripBrain.translate(text, Cloud.chat, Cloud.json);
+      Busy.stop();
+      if(tr.acts.length){
+        const r2 = TripBrain.apply(text, c, plan ? plan.days : [], tr.acts);
+        S.settings.rules = Object.assign({}, S.settings.rules || {}, r2.rules);
+        c = Object.assign({}, c, {rules: Object.assign({}, r2.rules, {custom: (c.rules || {}).custom})});
+        if(plan){ r2.fixed.forEach(f=>{ const d = plan.days.find(x=>x.date === f.date); if(d) d.items.push(f.item); }); r2.free.forEach(f=>{ (f.date ? plan.days.filter(x=>x.date === f.date) : plan.days).forEach(d=>d.items.push(TripBrain.freeBlock(f.part))); }); }
+        save({quiet: true});
+        toast('Understood (with ' + tr.by + ', remembered for next time): ' + r2.said.join(' · '));
+        if($('p-issue')) $('p-issue').value = '';
+        return brainPlan(trip, c, text);
+      }
+    }catch(e){ Busy.stop(); }
   }
   return aiPlan(trip, c, text, $('p-send'));
 }
