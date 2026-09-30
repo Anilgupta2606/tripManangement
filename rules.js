@@ -63,6 +63,7 @@ const Rules = (function(){
       `12. Items marked "locked": true were set by the traveller — keep them exactly (time, place, title) and plan around them.`,
     ];
     if(r.extra) lines.push('13. Also: ' + r.extra);
+    (r.custom || []).forEach((t, i)=>lines.push((r.extra ? 14 : 13) + i + '. ' + t));      // the traveller's own rules
     if(ctx && ctx.issues) lines.push('The traveller\'s latest requests override rules 1–11 where they conflict, but never rule 12.');
     return lines.join('\n');
   }
@@ -263,6 +264,70 @@ const Rules = (function(){
     return {days};
   }
 
-  return {DEFAULTS, KINDS, merge, asPrompt, check, skeleton, clean, tripAnchors, toMin, toTime, addDays, daysBetween};
+  /* ---------------------------------------------------------------- the documents checklist
+     Rules say which documents a trip needs; the trip's documents tick them off by themselves. Every rule is editable. */
+  const DOC_RULES = [
+    {id: 'passport', name: 'Passport', per: 'traveller', when: 'international', types: ['passport'], required: true, anyTrip: true, validMonths: 6,
+     note: 'Valid at least 6 months after you come back.'},
+    {id: 'visa', name: 'Visa or e-Visa', per: 'traveller', when: 'international', types: ['visa'], required: true, validThrough: true, except: '',
+     note: 'Not needed for visa-free countries — add them under “Not for”.'},
+    {id: 'tickets', name: 'Flight ticket or boarding pass', per: 'traveller', when: 'flights', types: ['flight', 'boarding-pass'], required: true},
+    {id: 'hotel', name: 'Hotel booking', per: 'trip', when: 'always', types: ['hotel'], required: true},
+    {id: 'insurance', name: 'Travel insurance', per: 'traveller', when: 'international', types: ['insurance'], required: false},
+    {id: 'photo-id', name: 'Photo ID (Aadhaar, PAN or driving licence)', per: 'traveller', when: 'domestic', types: ['passport'], required: true, anyTrip: true},
+    {id: 'forex', name: 'Forex card or local cash', per: 'trip', when: 'international', types: [], required: false},
+  ];
+  const WHEN = {always: 'Always', international: 'International trips', domestic: 'Trips at home', flights: 'When flying', countries: 'Only these countries'};
+  const nk = n => String(n || '').toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ');
+  const listOf = t => String(t || '').split(/[,;\n]/).map(x=>x.trim().toLowerCase()).filter(Boolean);
+  const addMonths = (iso, m) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + m); return d.toISOString().slice(0, 10); };
+
+  /* Does a rule apply to this trip? trip: {country, international, hasFlights} */
+  function applies(rule, trip){
+    const c = String(trip.country || '').toLowerCase();
+    if(rule.except && listOf(rule.except).indexOf(c) >= 0) return false;
+    switch(rule.when){
+      case 'international': return !!trip.international;
+      case 'domestic': return !trip.international;
+      case 'flights': return !!trip.hasFlights;
+      case 'countries': return listOf(rule.countries).indexOf(c) >= 0;
+      default: return true;
+    }
+  }
+  /* The checklist -> [{key, rule, person, status: 'done'|'ticked'|'expiring'|'missing', doc, why}]
+     trip: {id, start, end, country, international, hasFlights}; travellers: names; docs: every document;
+     ticks: {key: {done}}; custom: [{id, text, per, required}] (this trip's own items). */
+  function checklist(trip, travellers, docs, rules, ticks, custom){
+    const out = [];
+    ticks = ticks || {};
+    const mine = (d, person) => nk(d.person) === nk(person) || (d.fields && (d.fields.passengers || []).some(n=>nk(n) === nk(person)));
+    const item = (rule, person) => {
+      const key = rule.id + '|' + (person ? nk(person) : 'trip');
+      const pool = docs.filter(d=>(rule.types || []).indexOf(d.type) >= 0 && (rule.anyTrip || d.tripId === trip.id) && (!person || mine(d, person)));
+      let status = 'missing', doc = null, why = '';
+      // the best one: valid long enough, else the latest to expire
+      const need = rule.validMonths && trip.end ? addMonths(trip.end, rule.validMonths) : rule.validThrough && trip.end ? trip.end : '';
+      const ok = d => !need || !d.fields || !d.fields.validUntil || d.fields.validUntil >= need;
+      doc = pool.find(ok) || pool.slice().sort((a, b)=>String((b.fields || {}).validUntil).localeCompare(String((a.fields || {}).validUntil)))[0] || null;
+      if(doc){
+        if(ok(doc)) status = 'done';
+        else { status = 'expiring'; why = 'valid until ' + doc.fields.validUntil + ' — needs ' + (rule.validMonths ? rule.validMonths + ' months after you return (' + need + ')' : 'the whole trip (to ' + need + ')'); }
+      }
+      if(status !== 'done' && ticks[key] && ticks[key].done){ status = 'ticked'; }
+      out.push({key, rule, person: person || '', status, doc, why});
+    };
+    (rules || []).filter(r=>r && r.name && r.off !== true && applies(r, trip)).forEach(r=>{
+      if(r.per === 'trip') item(r, '');
+      else (travellers.length ? travellers : ['']).forEach(p=>item(r, p));
+    });
+    (custom || []).forEach(c=>{
+      const r = {id: 'c-' + c.id, name: c.text, per: c.per, types: [], required: c.required !== false, custom: true, cid: c.id};
+      if(c.per === 'trip' || !travellers.length) item(r, '');
+      else travellers.forEach(p=>item(r, p));
+    });
+    return out;
+  }
+
+  return {DEFAULTS, KINDS, merge, asPrompt, check, skeleton, clean, tripAnchors, toMin, toTime, addDays, daysBetween, DOC_RULES, WHEN, applies, checklist};
 })();
 if(typeof module !== 'undefined') module.exports = Rules;

@@ -40,6 +40,7 @@ function icon(name){
     news: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/>',
     photo: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M21 17l-5-5-9 9"/>',
     home: '<path d="M3 11l9-7 9 7v9a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1z"/>',
+    check: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 13l2 2 4-4"/>',
     gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/>',
     sync: '<path d="M21 12a9 9 0 01-15.5 6.2M3 12A9 9 0 0118.5 5.8"/><path d="M21 4v5h-5M3 20v-5h5"/>',
     lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/>',
@@ -88,7 +89,7 @@ const Store = (function(){
   };
 })();
 
-const EMPTY = () => ({v: 1, people: [], trips: [], docs: [], plans: {}, memories: [], flightsExtra: [], deleted: {},
+const EMPTY = () => ({v: 1, people: [], trips: [], docs: [], plans: {}, memories: [], flightsExtra: [], deleted: {}, checks: {},
   settings: {readerMode: 'builtin-ai', flightKeys: {}, rules: {}, lastTrip: ''}});
 let S = EMPTY();
 /* What syncs (everything but this device's keys and caches). */
@@ -128,6 +129,9 @@ function mergeData(mine, theirs){
   out.plans = Object.assign({}, theirs.plans || {});
   Object.entries(mine.plans || {}).forEach(([k, p])=>{ if(!out.plans[k] || (p.updatedAt || 0) >= (out.plans[k].updatedAt || 0)) out.plans[k] = p; });
   Object.keys(out.plans).forEach(k=>{ if(out.deleted[k]) delete out.plans[k]; });
+  // each trip's checklist (ticks and its own items): the newer one
+  out.checks = Object.assign({}, theirs.checks || {});
+  Object.entries(mine.checks || {}).forEach(([k, c])=>{ if(!out.checks[k] || (c.updatedAt || 0) >= (out.checks[k].updatedAt || 0)) out.checks[k] = c; });
   // settings: this device's, but keys either device has are kept (this device's win)
   const ms = mine.settings || {}, ts = theirs.settings || {};
   out.settings = Object.assign({}, ts, ms);
@@ -270,6 +274,20 @@ function flightsOf(tripId){
   });
   return out.sort((a, b)=>(a.date + (a.dep || '')).localeCompare(b.date + (b.dep || '')));
 }
+/* Who is on a trip: everyone its documents name, plus those added by hand, less those taken off. */
+function travellersOf(trip){
+  const out = [], seen = new Set();
+  const add = n => { n = Parse.titleCase(String(n || '').trim()); const k = nameKey(n); if(n && !seen.has(k)){ seen.add(k); out.push(n); } };
+  docsOf(trip.id).forEach(d=>{ add(d.person); ((d.fields || {}).passengers || []).forEach(add); ((d.fields || {}).guests || []).forEach(add); });
+  (trip.travellers || []).forEach(add);
+  const off = (trip.notTravelling || []).map(nameKey);
+  return out.filter(n=>off.indexOf(nameKey(n)) < 0);
+}
+const homeCountry = () => S.settings.homeCountry || 'India';
+function isInternationalTrip(trip){
+  if(flightsOf(trip.id).some(f=>f.international)) return true;
+  return !!(trip.country && trip.country.toLowerCase() !== homeCountry().toLowerCase());
+}
 /* "Anil Gupta (23A), Priya Gupta (23B), Aarav Gupta" */
 const travellersText = f => (f.travellers || []).map(p=>p.name + (p.seat ? ' (' + p.seat + ')' : '')).join(', ');
 function hotelsOf(tripId){
@@ -300,6 +318,7 @@ function tripSpan(trip){
 const TABS = [
   {id: 'trips', label: 'Trips', icon: 'home'},
   {id: 'docs', label: 'Documents', icon: 'doc'},
+  {id: 'check', label: 'Checklist', icon: 'check'},
   {id: 'plan', label: 'Itinerary', icon: 'map'},
   {id: 'news', label: 'News', icon: 'news'},
   {id: 'flights', label: 'Flights', icon: 'plane'},

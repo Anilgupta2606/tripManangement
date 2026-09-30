@@ -13,7 +13,7 @@ node --test test/*.test.js >/dev/null || { echo "Tests failed - not publishing."
 
 mkdir -p "$DEST/data"
 # the app only: no tests, no README (the site would render it as a page)
-for f in index.html style.css parse.js rules.js cloud.js services.js core.js docs.js plan.js live.js sw.js manifest.webmanifest icon.svg icon-192.png icon-512.png; do
+for f in index.html style.css parse.js rules.js cloud.js services.js core.js docs.js plan.js checklist.js live.js sw.js manifest.webmanifest icon.svg icon-192.png icon-512.png; do
   cp "$f" "$DEST/$f"
 done
 cp data/airports.json data/airlines.json "$DEST/data/"

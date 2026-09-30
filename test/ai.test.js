@@ -32,3 +32,25 @@ test('first choice and fallback', ()=>{
   store['tripvault-ai'] = JSON.stringify({keys: {gemini: 'g', groq: 'q', mistral: 'm'}, order: [], off: [], first: 'mistral', fallback: false});
   assert.deepEqual(Array.from(C.aiStatus(), x=>x.id), ['mistral']);
 });
+
+test('a web search that is optional: Gemini at its free limit, so Groq answers', async ()=>{
+  store['tripvault-ai'] = JSON.stringify({keys: {gemini: 'g', groq: 'q'}, order: [], off: []});
+  store['tripvault-ai-rest'] = JSON.stringify({});
+  const calls = [];
+  ctx.fetch = async (url, init) => {
+    calls.push(url);
+    if(/\/models/.test(url) && !init) return {ok: false, status: 500, json: async ()=>({}), text: async ()=>''};    // model lists: use the built-in ones
+    if(/generativelanguage/.test(url)) return {ok: false, status: 429, text: async ()=>'quota exhausted', json: async ()=>({})};
+    return {ok: true, status: 200, json: async ()=>({choices: [{message: {content: '{"status":"clear"}'}}]}), text: async ()=>''};
+  };
+  Object.assign(ctx, {AbortController, setTimeout, clearTimeout, JSON});
+  const r = await C.chat('brief', [{role: 'user', content: 'Dubai'}], {search: true, searchOptional: true});
+  assert.equal(r.provider, 'Groq');
+  assert.equal(r.noSearch, true);
+  assert.ok(calls.some(u=>/generativelanguage/.test(u)), 'Gemini was tried first');
+  // Gemini is now resting: the next request goes straight to Groq
+  const r2 = await C.chat('brief', [{role: 'user', content: 'Dubai'}], {search: true, searchOptional: true});
+  assert.equal(r2.provider, 'Groq');
+  // a search that is required still says what is missing
+  await assert.rejects(C.chat('flight', [{role: 'user', content: '6E1461'}], {search: true}), /resting|Gemini/);
+});

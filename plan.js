@@ -22,7 +22,7 @@ function planContext(trip, city, plan){
   const fl = flightsOf(trip.id);
   const a = Rules.tripAnchors(fl, airports, start || '0000', end || '9999');
   const hotel = plan && plan.hotel && plan.hotel.name ? plan.hotel : hotelHere ? {name: hotelHere.name, address: hotelHere.address} : {name: '', address: ''};
-  const rules = Object.assign({}, S.settings.rules || {});
+  const rules = Object.assign({}, S.settings.rules || {}, {custom: (S.settings.planRules || []).filter(r=>r.on !== false && r.text).map(r=>r.text)});
   if(hotelHere && hotelHere.checkInTime) rules.checkInTime = hotelHere.checkInTime;
   if(hotelHere && hotelHere.checkOutTime) rules.checkOutTime = hotelHere.checkOutTime;
   const known = citiesOf(trip).find(x=>x.city.toLowerCase() === lc);
@@ -196,7 +196,7 @@ async function aiPlan(trip, c, issue){
     const web = planState.web && Cloud.canSearch();
     say(web ? 'The AI is planning and searching the web…' : 'The AI is planning…');
     let r;
-    try{ r = await Cloud.chat(PLAN_SYSTEM(Rules.asPrompt(c.rules, {issues: !!issue})), turns, web ? {search: true} : {}, planState.ctl.signal); }
+    try{ r = await Cloud.chat(PLAN_SYSTEM(Rules.asPrompt(c.rules, {issues: !!issue})), turns, web ? {search: true, searchOptional: true} : {}, planState.ctl.signal); }
     catch(e){
       if(!web || e.code === 'cancelled') throw e;
       say('Web search unavailable — planning from the facts…');

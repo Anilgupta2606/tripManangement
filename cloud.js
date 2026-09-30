@@ -425,6 +425,11 @@ const Cloud = (function(){
     let order = usable(s);
     if(opts.images && opts.images.length) order = order.filter(id=>PROVIDERS.find(p=>p.id === id).vision);
     if(opts.search) order = order.filter(id=>PROVIDERS.find(p=>p.id === id).search);
+    // a web search that is only nice to have: when no AI that can search is free, the next AI answers without it
+    if(opts.search && opts.searchOptional){
+      const free = order.filter(id=>!resting(id));
+      if(!free.length) return Object.assign(await chat(system, turns, Object.assign({}, opts, {search: false, searchOptional: false}), signal), {noSearch: true});
+    }
     if(!order.length) throw new Error(opts.search ? 'Web search needs a Google Gemini key (free) — add one in Settings → AI.'
       : opts.images ? 'Reading a picture needs a Gemini or Claude key.' : 'Add a free AI key in Settings → AI (or in the Expense Tracker).');
     const skipped = []; let lastError = null;
@@ -451,6 +456,8 @@ const Cloud = (function(){
         }
       }
     }
+    if(opts.search && opts.searchOptional)                     // the searching AI failed: the next one answers without searching
+      return Object.assign(await chat(system, turns, Object.assign({}, opts, {search: false, searchOptional: false}), signal), {noSearch: true});
     const why = skipped.concat(lastError && lastError.unavailable ? [lastError.message] : []);
     throw new Error('No AI service could answer' + (why.length ? ': ' + why.join('; ') : '') + '. Try again later or add another free key.');
   }

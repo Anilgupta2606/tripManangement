@@ -98,6 +98,12 @@ VIEWS.trips = function(main, cur){
       </div>
       <div class="pass-stub"><span class="stub-big">${esc(stub[0])}</span><span class="stub-small">${esc(stub[1])}</span>${first && first.from && first.to ? `<span class="stub-route">${esc(first.from)} → ${esc(first.to)}</span>` : ''}</div>
     </section>`;
+    // the documents checklist, in one line
+    const L = checklistOf(cur);
+    if(L.items.length) html += `<section class="card ck-mini ${L.missing.length ? 'has-missing' : 'all-good'}">
+      <div><b>${L.missing.length ? L.missing.length + ' required document' + (L.missing.length === 1 ? '' : 's') + ' missing' : 'Every required document is here'}</b>
+        <div class="small muted">${L.missing.length ? L.missing.slice(0, 3).map(i=>esc(i.rule.name) + (i.person ? ' — ' + esc(i.person) : '') + (i.status === 'expiring' ? ' (validity)' : '')).join(' · ') + (L.missing.length > 3 ? ' …' : '') : L.ready + ' of ' + L.items.length + ' items ready'}</div></div>
+      <a class="btn ${L.missing.length ? 'primary' : 'soft'} small" href="#check">${icon('check')} Checklist</a></section>`;
     html += `<section class="card"><h2>Timeline</h2>${timeline(t)}</section>`;
   }
   if(unfiled.length) html += `<section class="card notice"><h2>${unfiled.length} document${unfiled.length === 1 ? '' : 's'} not in a trip</h2>

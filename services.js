@@ -391,7 +391,7 @@ const News = (function(){
   async function summarise(trip, data, opts){
     opts = opts || {};
     const list = (arr, n) => (arr || []).slice(0, n).map(a=>'- ' + a.title + ' (' + a.source + ', ' + String(a.date).slice(0, 10) + ')').join('\n') || '(none)';
-    const system = `You brief a traveller on what is happening at their destination. Be factual and calm, only use what you are given${opts.search ? ' or find with Google Search (prefer the last 7 days)' : ''}, and say plainly when things look normal.
+    const brief = search => `You brief a traveller on what is happening at their destination. Be factual and calm, only use what you are given${search ? ' or find with Google Search (prefer the last 7 days)' : ''}, and say plainly when things look normal.
 Answer with JSON only: {"status":"clear"|"caution"|"serious","headline":"one line","points":["3-6 short bullet points, most important first"],"flights":"one line on flights/airports: cancellations, closures, strikes, airspace — or that nothing unusual is reported","advice":"one line: what the traveller should do"}
 "serious" = war, airspace closure, government advice against travel, major unrest or disaster affecting the trip; "caution" = protests, strikes, weather disruption, partial warnings; else "clear".`;
     const msg = `Trip: ${trip.city}${trip.country ? ', ' + trip.country : ''}, ${trip.start || '?'} to ${trip.end || '?'}. Flights: ${(trip.flights || []).map(f=>f.flight + ' ' + f.from + '→' + f.to + ' ' + f.date).join('; ') || 'none known'}. Today is ${new Date().toISOString().slice(0, 10)}.
@@ -400,9 +400,10 @@ Weather forecast: ${data.weather ? Object.entries(data.weather).map(([d, w])=>d 
 Headlines about ${trip.city}:\n${list(data.city, 15)}
 Safety / geopolitics:\n${list(data.security, 15)}
 Flights / airports:\n${list(data.travel, 15)}`;
-    const r = await Cloud.chat(system, [{role: 'user', content: msg}], opts.search ? {search: true} : {});
+    // with the web search if an AI that can search is free; otherwise the next AI (Groq, …) writes it from the headlines
+    const r = await Cloud.chat(brief(!!opts.search), [{role: 'user', content: msg}], opts.search ? {search: true, searchOptional: true} : {});
     const j = Cloud.json(r.text);
-    return Object.assign({status: 'clear', headline: '', points: [], flights: '', advice: ''}, j, {by: r.provider + ' · ' + r.model, sources: r.sources || [], at: Date.now()});
+    return Object.assign({status: 'clear', headline: '', points: [], flights: '', advice: ''}, j, {by: r.provider + ' · ' + r.model + (opts.search && r.noSearch ? ' (without web search — the AI that searches is busy)' : ''), sources: r.sources || [], at: Date.now()});
   }
   return {headlines, advisory, summarise, gdelt};
 })();
