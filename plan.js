@@ -46,7 +46,7 @@ VIEWS.plan = function(main, cur){
     <div class="row">${plan ? `<button class="btn ghost" id="p-undo" ${plan.versions && plan.versions.length ? '' : 'disabled'}>Undo</button><button class="btn ghost" id="p-copy">Copy as text</button>` : ''}<button class="btn soft" id="p-rules">${icon('shield')} Rules</button></div></section>
   <section class="card plan-setup">
     <div class="grid4">
-      <label>City${ctx.country ? ` <span class="muted small">· ${esc(ctx.country)}</span>` : ''}<input id="p-city" value="${esc(planState.city)}" placeholder="Where"></label>
+      <label>City<input id="p-city" value="${esc(planState.city)}" placeholder="Where">${ctx.country ? `<span class="field-note">${esc(ctx.country)}</span>` : ''}</label>
       <label>From<input type="date" id="p-start" value="${esc(ctx.start || '')}"></label>
       <label>To<input type="date" id="p-end" value="${esc(ctx.end || '')}"></label>
       <label>Staying at<input id="p-hotel" list="p-hotels" value="${esc(ctx.hotel.name)}" placeholder="Hotel or area"><datalist id="p-hotels">${hotelsOf(cur.id).map(h=>`<option value="${esc(h.name)}">`).join('')}</datalist></label>
@@ -59,8 +59,13 @@ VIEWS.plan = function(main, cur){
     <div class="weather-strip" id="p-weather"></div>
     <div class="row">
       <button class="btn primary big" id="p-ai" ${Cloud.aiAvailable() ? '' : 'disabled title="Add a free AI key in Setup"'}>${icon('spark')} ${plan ? 'Re-plan with AI' : 'Plan with AI'}</button>
-      <span class="muted small plan-how">${Cloud.aiAvailable() ? 'Reads the city guide, places near your hotel, the weather and news from the internet, then plans every day to your rules.' : 'AI planning needs a free key — <a href="#" id="p-key">add one</a>.'}</span>
-      <button class="linkish small" id="p-skel">${plan ? 'Reset to the plain layout' : 'Or lay out the days without AI'}</button>
+      <span class="muted small plan-how">${!Cloud.aiAvailable() ? 'AI planning needs a free key — <a href="#" id="p-key">add one</a>.'
+        : plan ? 'Writes a fresh plan for every day from the city guide, places near your hotel, weather and news. Items you locked 🔒 stay; Undo brings back the old plan.'
+        : 'Writes a full plan for every day — sights, meals and timings — from the city guide, places near your hotel, weather and news, to your rules.'}</span>
+      <span class="plan-more">
+        <button class="linkish small" id="p-skel" title="No AI: only flights, transfers, check-in/out and meal slots, with open blocks for you to fill">${plan ? 'Start again without AI' : 'Or lay out the days without AI'}</button>
+        ${plan ? `<button class="linkish small danger-link" id="p-del">Delete this plan</button>` : ''}
+      </span>
       <span class="muted small" id="p-status"></span>
     </div>
   </section>
@@ -96,13 +101,18 @@ VIEWS.plan = function(main, cur){
   $('p-rules').onclick = ()=>openRules();
   if($('p-key')) $('p-key').onclick = e=>{ e.preventDefault(); location.href = Cloud.central ? '/setup/#ai' : '#'; if(!Cloud.central) openSettings('ai'); };
   $('p-skel').onclick = async ()=>{
-    if(plan && !(await confirmBox('Replace the plan?', 'The current plan is kept in Undo.', 'Replace'))) return;
+    if(plan && !(await confirmBox('Start again without AI?', 'The plan is replaced by the fixed parts only — flights, transfers, check-in/out and meal slots — with open blocks for you to fill. Undo brings the old plan back.', 'Start again'))) return;
     const c = readSetup(ctx);
     if(!c) return;
     const sk = Rules.skeleton({city: c.city, start: c.start, end: c.end, hotel: c.hotel, arrival: c.arrival, departure: c.departure}, c.rules);
     storePlan(cur, c, sk.days, 'Built-in layout', 'Laid out the fixed parts');
   };
   $('p-ai').onclick = ()=>{ const c = readSetup(ctx); if(c) aiPlan(cur, c, ''); };
+  if($('p-del')) $('p-del').onclick = async ()=>{
+    if(!(await confirmBox('Delete this plan?', 'Every day of the ' + planState.city + ' plan goes, with what was asked of the AI. You can plan it again from scratch.', 'Delete'))) return;
+    delete S.plans[key]; S.deleted[key] = Date.now();
+    save(); render(); toast('Plan deleted — plan it again whenever you like.');
+  };
   if(!plan) { loadWeather(cur, ctx); return; }
   loadWeather(cur, ctx);
   if($('p-fix')) $('p-fix').onclick = ()=>{ const c = readSetup(ctx); if(c) aiPlan(cur, c, 'Fix these rule problems: ' + problems.filter(p=>p.level !== 'info').map(p=>p.text).join(' | ')); };

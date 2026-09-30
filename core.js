@@ -129,7 +129,7 @@ function mergeData(mine, theirs){
   });
   out.plans = Object.assign({}, theirs.plans || {});
   Object.entries(mine.plans || {}).forEach(([k, p])=>{ if(!out.plans[k] || (p.updatedAt || 0) >= (out.plans[k].updatedAt || 0)) out.plans[k] = p; });
-  Object.keys(out.plans).forEach(k=>{ if(out.deleted[k]) delete out.plans[k]; });
+  Object.keys(out.plans).forEach(k=>{ if(out.deleted[k] && out.deleted[k] >= (out.plans[k].updatedAt || 0)) delete out.plans[k]; });   // a plan made again later stays
   // each trip's checklist (ticks and its own items): the newer one
   out.checks = Object.assign({}, theirs.checks || {});
   Object.entries(mine.checks || {}).forEach(([k, c])=>{ if(!out.checks[k] || (c.updatedAt || 0) >= (out.checks[k].updatedAt || 0)) out.checks[k] = c; });

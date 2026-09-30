@@ -17,3 +17,11 @@ test('merge keeps newest edits, deletions, and keys from both devices', ()=>{
   assert.equal(m.settings.flightKeys.aerodatabox, 'A');            // the phone's empty key does not wipe the laptop's
   assert.equal(m.settings.sharedAi.keys.gemini, 'G');               // the phone with no keys keeps the laptop's
 });
+
+test('a deleted plan stays deleted; one made again later survives', ()=>{
+  const base = {trips: [], docs: [], people: [], memories: [], flightsExtra: [], settings: {}};
+  const old = ctx.mergeData(Object.assign({}, base, {plans: {}, deleted: {'t1|dubai': 100}}), Object.assign({}, base, {plans: {'t1|dubai': {updatedAt: 50}}, deleted: {}}));
+  assert.equal(old.plans['t1|dubai'], undefined);
+  const again = ctx.mergeData(Object.assign({}, base, {plans: {'t1|dubai': {updatedAt: 200}}, deleted: {'t1|dubai': 100}}), Object.assign({}, base, {plans: {}, deleted: {'t1|dubai': 100}}));
+  assert.ok(again.plans['t1|dubai']);
+});
