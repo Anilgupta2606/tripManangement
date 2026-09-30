@@ -378,7 +378,7 @@ async function gate(){
     <label class="check"><input type="checkbox" id="remember"> Keep me signed in on this device</label>
     <p class="err" id="e" hidden>That username or password is wrong.</p>
     <button class="btn primary wide">Sign in</button>
-    <p class="muted small">${src === 'expense-tracker' ? 'The same sign-in as the Expense Tracker.' : src === 'ledger' ? 'The same sign-in as the Ledger.' : S.settings.auth ? 'Your Trip Vault sign-in.' : 'First time: admin / admin — change it in Settings.'}</p></form></div>`;
+    <p class="muted small">${src === 'expense-tracker' ? 'The same sign-in as the Expense Tracker.' : src === 'ledger' ? 'The same sign-in as the Ledger.' : 'Your Trip Vault sign-in.'}</p></form></div>`;
   $('u').focus();
   $('lf').onsubmit = async e=>{
     e.preventDefault();
