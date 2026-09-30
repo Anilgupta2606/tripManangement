@@ -517,3 +517,5 @@ fieldset.types p{ flex-basis: 100%; margin: 0; }
 .busy-mark{ width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 700; flex: none; }
 .busy.ok .busy-mark{ background: var(--good); } .busy.bad .busy-mark{ background: var(--bad); }
 @media (max-width: 760px){ .busy{ bottom: 84px; } }
+.checker details.fixes{margin-top:10px}
+.checker details.fixes ul{margin:6px 0 0}

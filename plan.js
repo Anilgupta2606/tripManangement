@@ -74,8 +74,9 @@ VIEWS.plan = function(main, cur){
   <section class="card checker ${nErr ? 'bad' : nWarn ? 'meh' : 'good'}">
     <div class="row"><b>${nErr ? nErr + ' rule break' + (nErr === 1 ? '' : 's') : nWarn ? 'Follows the must-rules' : 'Follows every rule'}</b>
       <span class="muted small">${nWarn ? nWarn + ' warning' + (nWarn === 1 ? '' : 's') + ' · ' : ''}${problems.filter(p=>p.level === 'info').length} note(s)</span><span class="grow"></span>
-      ${(nErr || nWarn) && Cloud.aiAvailable() ? `<button class="btn soft small" id="p-fix">${icon('spark')} Fix these with AI</button>` : ''}</div>
+      ${nErr || nWarn ? `<button class="btn soft small" id="p-fix" title="The app moves the times itself (no AI, instant); ${Cloud.aiAvailable() ? 'the AI is asked only about what is left' : 'the rest is up to you'}">${icon('check')} Fix these</button>` : ''}</div>
     ${problems.length ? `<ul class="problems">${problems.map(p=>`<li class="${p.level}" ${p.day !== null ? `data-goto="${p.day}"` : ''}><span class="lvl">${p.level === 'error' ? 'Must fix' : p.level === 'warn' ? 'Warning' : 'Note'}</span> ${esc(p.text)}</li>`).join('')}</ul>` : ''}
+    ${(plan.fixes || []).length ? `<details class="fixes"><summary class="small">What the app changed to follow the rules (${plan.fixes.length})</summary><ul class="history small">${plan.fixes.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></details>` : ''}
   </section>
   <section class="days" id="days">${plan.days.map((d, di)=>dayCard(d, di, problems, ctx)).join('')}</section>
   <section class="card issues">
@@ -116,7 +117,7 @@ VIEWS.plan = function(main, cur){
   };
   if(!plan) { loadWeather(cur, ctx); return; }
   loadWeather(cur, ctx);
-  if($('p-fix')) $('p-fix').onclick = ()=>{ const c = readSetup(ctx); if(c) aiPlan(cur, c, 'Fix these rule problems: ' + problems.filter(p=>p.level !== 'info').map(p=>p.text).join(' | '), $('p-fix')); };
+  if($('p-fix')) $('p-fix').onclick = ()=>{ const c = readSetup(ctx); if(c) fixPlan(cur, c); };
   $('p-send').onclick = ()=>{ const t = $('p-issue').value.trim(); if(!t) return $('p-issue').focus(); const c = readSetup(ctx); if(c) aiPlan(cur, c, t, $('p-send')); };
   $('p-undo').onclick = ()=>{ const v = plan.versions.pop(); if(v){ plan.days = v.days; touch(plan); save(); render(); toast('Undone.'); } };
   $('p-copy').onclick = ()=>{ navigator.clipboard.writeText(planText(plan, ctx)).then(()=>toast('Copied — paste it anywhere.')); };
@@ -138,6 +139,7 @@ function storePlan(trip, c, days, by, what, extra){
   const key = planKey(trip.id, c.city);
   const p = S.plans[key] || {tripId: trip.id, city: c.city, history: [], versions: []};
   if(p.days) p.versions = (p.versions || []).concat([{at: Date.now(), days: p.days}]).slice(-15);
+  p.fixes = (extra && extra.fixes) || [];
   Object.assign(p, {city: c.city, country: c.country, start: c.start, end: c.end, hotel: c.hotel, days, by}, extra || {sources: [], used: []});
   if(what) p.history = (p.history || []).concat([{at: Date.now(), text: what}]).slice(-30);
   S.plans[key] = touch(p);
@@ -166,6 +168,100 @@ Include every date from start to end. Include flights, transfers, hotel check-in
 You are given what the internet says about the place: travel-guide listings with opening hours and prices, notable places near the hotel with their distance, the weather forecast and the news. Prefer those real places, keep to their listed hours and put far-apart places on different days. If you can search the web, check current opening hours, closures, festivals and events on the travel dates, and say in the notes what you found.
 THE RULES (follow all of them):
 ${rules}`;
+const DEVICE_AI = ['webllm', 'ollama'];
+/* Who would answer next: an AI on this device (small: it picks places, the app does the timing) or an online one. */
+function aiLineup(){
+  const list = (Cloud.aiStatus ? Cloud.aiStatus() : []).filter(x=>!x.resting);
+  return {deviceFirst: !!list[0] && DEVICE_AI.indexOf(list[0].id) >= 0, device: list.some(x=>DEVICE_AI.indexOf(x.id) >= 0), online: list.some(x=>DEVICE_AI.indexOf(x.id) < 0)};
+}
+const countOf = (n, one) => n + ' ' + one + (n === 1 ? '' : 's');
+
+/* "Fix these": the app moves times itself (no AI, instant); the AI is asked only for what is still wrong after that. */
+async function fixPlan(trip, c){
+  const key = planKey(trip.id, c.city), plan = S.plans[key];
+  if(!plan || planState.busy) return;
+  const cw = Object.assign({}, c, {weather: LOCAL_WEATHER[key]});
+  const {days, changes} = Rules.repair(plan, c.rules, cw);
+  const left = Rules.check({days}, c.rules, cw).filter(p=>p.level !== 'info');
+  if(changes.length) storePlan(trip, c, days, plan.by, 'Fixed by the app: ' + countOf(changes.length, 'change'), {sources: plan.sources || [], used: plan.used || [], fixes: changes});
+  // a small AI on this device would re-plan every day for this: leave that to "Re-plan with AI"
+  if(left.length && Cloud.aiAvailable() && aiLineup().deviceFirst){ toast((changes.length ? 'Fixed ' + countOf(changes.length, 'thing') + ' without AI. ' : '') + left.length + ' left (weather, pace or places) — Re-plan with AI to rebuild around them.'); return; }
+  if(left.length && Cloud.aiAvailable()){
+    toast(changes.length ? 'Fixed ' + countOf(changes.length, 'thing') + ' without AI — asking the AI about the ' + left.length + ' left.' : 'Asking the AI about what the app cannot move by itself.');
+    return aiPlan(trip, c, 'Fix these rule problems: ' + left.map(p=>p.text).join(' | '), $('p-fix'));
+  }
+  toast(changes.length ? 'Fixed ' + countOf(changes.length, 'thing') + ' without AI' + (left.length ? ' — ' + left.length + ' left need you' : ' — follows the rules now') + '.' : 'Nothing the app can move by itself' + (left.length ? ' — add an AI key for the rest.' : '.'));
+}
+
+/* A small AI (on this device) picks the places for each day from the internet's list; the app lays them out in the
+   day's open slots, so the timing is always right. One short question per day fits the small model. */
+const SMALL_SYSTEM = 'You pick places for one day of a trip. Use only the numbered places you are given. Answer with JSON only.';
+async function smallPlan(trip, c, know, issue, prev, progress, signal){
+  const r = Rules.merge(c.rules), key = planKey(trip.id, c.city), weather = c.weather || LOCAL_WEATHER[key] || {};
+  const sk = Rules.skeleton({city: c.city, start: c.start, end: c.end, hotel: c.hotel, arrival: c.arrival, departure: c.departure}, c.rules);
+  // the traveller's locked items stay (flights, transfers and check-in/out come from the layout itself)
+  const locked = prev && prev.days ? {days: prev.days.map(d=>({date: d.date, items: d.items.filter(i=>i.locked && ['flight', 'transit', 'hotel'].indexOf(i.kind) < 0)}))} : null;
+  let days = Rules.clean({days: sk.days}, locked).days;
+  const near = {}; (know && know.nearby || []).forEach(p=>{ near[p.name.toLowerCase()] = p.km; });
+  const KIND = {see: 'sight', do: 'activity', buy: 'shopping'};
+  const avoid = String(r.avoid || '').toLowerCase().split(/[,;]/).map(x=>x.trim()).filter(x=>x.length > 3);
+  const ok = p => !avoid.some(a=>(p.name + ' ' + (p.note || '')).toLowerCase().indexOf(a) >= 0);
+  const listed = (know && know.guide ? know.guide.listings : []);
+  const places = listed.filter(l=>KIND[l.kind]).map(l=>({name: l.name, kind: KIND[l.kind], hours: l.hours, note: l.note, area: l.area, km: near[l.name.toLowerCase()]}));
+  (know && know.nearby || []).slice(0, 30).forEach(p=>{ if(!places.some(x=>x.name.toLowerCase() === p.name.toLowerCase())) places.push({name: p.name, kind: 'sight', km: p.km, note: ''}); });
+  const eats = listed.filter(l=>l.kind === 'eat' || l.kind === 'drink').map(l=>({name: l.name, note: l.note, price: l.price, area: l.area}));
+  const pool = places.filter(ok);
+  const taken = new Set(), ate = new Set();
+  let last = null, failed = 0;
+  const LETTERS = 'ABCDEFGH';
+  for(let i = 0; i < days.length; i++){
+    const day = days[i];
+    const slots = day.items.filter(x=>x.kind === 'free'), meals = day.items.filter(x=>x.kind === 'meal');
+    if(!slots.length && !meals.length) continue;
+    const isArr = c.arrival && c.arrival.date === day.date, isDep = c.departure && c.departure.date === day.date;
+    const cap = Math.min(r.maxSights[r.pace] || 3, isArr || isDep ? 1 : 9, slots.length * 2);
+    const opts = pool.filter(p=>!taken.has(p.name)).slice(0, 14);
+    const fresh = eats.filter(p=>!ate.has(p.name)), food = (fresh.length >= 2 ? fresh : eats).slice(0, 8);      // a different place each meal
+    const w = weather[day.date];
+    const lines = [
+      `City: ${c.city}${c.country ? ', ' + c.country : ''}. Date: ${fmtDate(day.date)}${isArr ? ' (arrival day - keep it light, near the hotel)' : isDep ? ' (departure day)' : ''}.`,
+      `Hotel: ${c.hotel.name || 'in the centre'}${c.hotel.address ? ', ' + c.hotel.address : ''}. Weather: ${w ? Math.round(w.tmax) + '°C, rain ' + w.rain + '%' + (w.rain >= r.rainChance ? ' - choose indoor places' : '') : 'no forecast'}.`,
+      [r.travellers && 'Travellers: ' + r.travellers, r.interests && 'Interests: ' + r.interests, r.food && 'Food: ' + r.food, r.avoid && 'Avoid: ' + r.avoid].filter(Boolean).join('. '),
+      issue ? `The traveller asks: "${issue}"` : '',
+      slots.length ? 'Open slots:\n' + slots.map((x, k)=>`${LETTERS[k]} ${x.start}-${x.end}`).join('\n') : '',
+      opts.length ? 'Places:\n' + opts.map((p, k)=>`${k + 1}. ${p.name} [${p.kind}]${p.area ? ' in ' + p.area : ''}${p.km !== undefined ? ' ' + p.km + ' km from hotel' : ''}${p.hours ? ' hours ' + p.hours.slice(0, 40) : ''}${p.note ? ' - ' + p.note.slice(0, 70) : ''}`).join('\n') : 'No list: name real, well-known places yourself in "name".',
+      meals.length && food.length ? 'Food places:\n' + food.map((p, k)=>`${k + 21}. ${p.name}${p.area ? ' in ' + p.area : ''}${p.note ? ' - ' + p.note.slice(0, 50) : ''}`).join('\n') : '',
+      `Pick at most ${cap} places, close to each other. Give each a slot letter, its number, minutes (45-180), a short note and whether it is outdoors.` + (meals.length ? ' Pick a food place number for ' + meals.map(m=>/lunch/i.test(m.title) ? 'lunch' : 'dinner').join(' and ') + '.' : ''),
+      'JSON: {"title":"theme of the day","picks":[{"slot":"A","n":1,"minutes":90,"note":"why","outdoor":false}],"lunch":21,"dinner":22}',
+    ].filter(Boolean);
+    let j;
+    try{
+      const res = await Cloud.chat(SMALL_SYSTEM, [{role: 'user', content: lines.join('\n')}],
+        {only: DEVICE_AI, maxTokens: 700, onProgress: (t, id)=>progress('Day ' + (i + 1) + ' of ' + days.length + ' — ' + t, id)}, signal);
+      j = Cloud.json(res.text); last = res;
+    }catch(e){ if(e.code === 'cancelled') throw e; failed++; continue; }
+    const picks = (Array.isArray(j.picks) ? j.picks : []).slice(0, cap).map(p=>{
+      const o = opts[(parseInt(p.n, 10) || 0) - 1];
+      const name = o ? o.name : String(p.name || '').trim();
+      if(!name || taken.has(name)) return null;
+      taken.add(name);
+      const slot = slots[LETTERS.indexOf(String(p.slot || '').toUpperCase())] || slots[0];
+      const min = Math.max(45, Math.min(180, parseInt(p.minutes, 10) || 90));
+      return {slot: slot && slot.id, item: {id: 's' + Math.random().toString(36).slice(2, 9), title: name, place: name + ', ' + c.city, kind: o ? o.kind : 'sight',
+        start: '00:00', end: Rules.toTime(min), notes: [String(p.note || '').slice(0, 200), o && o.hours ? 'hours: ' + o.hours : ''].filter(Boolean).join(' · '), outdoor: !!p.outdoor, cost: '', locked: false}};
+    }).filter(Boolean);
+    meals.forEach(m=>{
+      const f = food[(parseInt(j[/lunch/i.test(m.title) ? 'lunch' : 'dinner'], 10) || 0) - 21];
+      if(f){ ate.add(f.name); m.title = m.title.replace(/ near the hotel$/, '') + ' — ' + f.name; m.place = f.name + ', ' + c.city; m.notes = String(f.note || '').slice(0, 200); }
+    });
+    const filled = Rules.fill(day, picks, c.rules, c).day;
+    if(typeof j.title === 'string' && j.title.trim()) filled.title = j.title.trim().slice(0, 80);
+    days[i] = filled;
+  }
+  if(!last) throw new Error('The AI on this device could not answer' + (failed ? ' (' + countOf(failed, 'day') + ' tried)' : '') + '. Try again, or use an online AI.');
+  return {days, provider: last.provider, model: last.model, failed};
+}
+
 async function aiPlan(trip, c, issue, clicked){
   if(planState.busy){ planState.ctl && planState.ctl.abort(); return; }
   const key = planKey(trip.id, c.city);
@@ -173,6 +269,7 @@ async function aiPlan(trip, c, issue, clicked){
   const st = $('p-status');
   const btns = ['p-ai', 'p-send', 'p-fix'].map($).filter(Boolean);
   planState.busy = true; planState.ctl = new AbortController();
+  const signal = planState.ctl.signal;
   btns.forEach(b=>{ b.dataset.label = b.innerHTML; if(b !== clicked) b.disabled = true; });
   const btn = clicked || (issue ? $('p-send') : $('p-ai'));
   if(btn) btn.innerHTML = '<span class="spinner"></span> Working… (tap to stop)';
@@ -203,32 +300,66 @@ async function aiPlan(trip, c, issue, clicked){
     const turns = [{role: 'user', content: `Plan the stay.\nFacts: ${JSON.stringify(facts)}${news ? '\n' + news : ''}${local ? '\n\nWhat the internet says about ' + c.city + ':\n' + local : ''}` +
       (prev && prev.days ? `\n\nThe current plan (keep what works; items with "locked": true must stay exactly):\n${JSON.stringify({days: prev.days})}` : '') +
       (issue ? `\n\nThe traveller asks: "${issue}"\nChange the plan to do this, following the rules.` : '')}];
-    // with a Gemini key the AI also searches the web (opening hours, closures, events on the dates); else it plans from the facts above
-    const web = planState.web && Cloud.canSearch();
-    say('Asking the AI to plan…');
+    const system = PLAN_SYSTEM(Rules.asPrompt(c.rules, {issues: !!issue}));
     // the panel shows each step as it really happens: which AI is asked (and its model), which is skipped and why
-    const progress = (t, id) => Busy.step(t + (id === 'ollama' ? ' — on this computer this can take a few minutes' : id ? ' — usually under a minute' : ''));
-    let r;
-    try{ r = await Cloud.chat(PLAN_SYSTEM(Rules.asPrompt(c.rules, {issues: !!issue})), turns, web ? {search: true, searchOptional: true, onProgress: progress} : {onProgress: progress}, planState.ctl.signal); }
-    catch(e){
-      if(!web || e.code === 'cancelled') throw e;
-      say('Web search unavailable — planning from the facts…');
-      r = await Cloud.chat(PLAN_SYSTEM(Rules.asPrompt(c.rules, {issues: !!issue})), turns, {onProgress: progress}, planState.ctl.signal);
+    const progress = (t, id) => Busy.step(t + (DEVICE_AI.indexOf(id) >= 0 ? ' — on this device' : id ? ' — usually under a minute' : ''));
+    const cw = Object.assign({}, c, {weather: LOCAL_WEATHER[key]});
+    const sk = Rules.skeleton({city: c.city, start: c.start, end: c.end, hotel: c.hotel, arrival: c.arrival, departure: c.departure}, c.rules);
+    const fromAnswer = text => { const j = Cloud.json(text), cl = Rules.clean(j, prev); return {j, days: cl.days.length ? sk.days.map(d=>cl.days.find(x=>x.date === d.date) || d) : null}; };
+    const lineup = aiLineup();
+    const online = {onProgress: progress}; if(lineup.device) online.skip = DEVICE_AI;     // the long plan is for online AIs only
+    let r = null, got = null, small = null;
+    if(!lineup.deviceFirst){
+      // with a Gemini key the AI also searches the web (opening hours, closures, events on the dates); else it plans from the facts above
+      const web = planState.web && Cloud.canSearch();
+      say('Asking the AI to plan…');
+      try{
+        try{ r = await Cloud.chat(system, turns, web ? Object.assign({search: true, searchOptional: true}, online) : online, signal); }
+        catch(e){
+          if(!web || e.code === 'cancelled') throw e;
+          say('Web search unavailable — planning from the facts…');
+          r = await Cloud.chat(system, turns, online, signal);
+        }
+        got = fromAnswer(r.text);
+        if(!got.days) throw new Error('The AI returned an empty plan. Try again.');
+      }catch(e){
+        if(e.code === 'cancelled' || !lineup.device) throw e;
+        say('The online AIs could not answer — the AI on this device picks the places, the app does the timing…');
+      }
+    }
+    if(!got){
+      if(!lineup.deviceFirst) Busy.step('');
+      else say('The AI on this device picks the places for each day; the app does the timing…');
+      small = await smallPlan(trip, c, know, issue, prev, progress, signal);
+      r = {provider: small.provider, model: small.model, sources: []};
+      got = {j: {}, days: small.days};
     }
     if(r.sources && r.sources.length) used.push('web search (' + r.sources.length + ' sources)');
+    // every answer goes through the rules: the app moves what it can, then asks once more about what is left
     say('Checking the plan against your rules…');
+    let fixed = Rules.repair({days: got.days}, c.rules, cw);
+    let left = Rules.check({days: fixed.days}, c.rules, cw).filter(p=>p.level !== 'info');
+    if(left.length && !small){
+      say('Still ' + countOf(left.length, 'rule problem') + ' — asking the AI once more…');
+      try{
+        const again = turns.concat([{role: 'assistant', content: r.text}, {role: 'user', content: 'Your plan still breaks these rules: ' + left.map(p=>p.text).join(' | ') + '\nAnswer with the whole corrected plan as JSON, in the same format.'}]);
+        const r2 = await Cloud.chat(system, again, online, signal);
+        const g2 = fromAnswer(r2.text);
+        if(g2.days){
+          const f2 = Rules.repair({days: g2.days}, c.rules, cw), l2 = Rules.check({days: f2.days}, c.rules, cw).filter(p=>p.level !== 'info');
+          if(l2.length < left.length){ fixed = f2; left = l2; got = g2; r = Object.assign(r2, {sources: (r.sources || []).concat(r2.sources || [])}); }
+        }
+      }catch(e){ if(e.code === 'cancelled') throw e; }
+    }
     Busy.step('');
-    const j = Cloud.json(r.text);
-    const clean = Rules.clean(j, prev);
-    if(!clean.days.length) throw new Error('The AI returned an empty plan. Try again.');
-    // days outside the stay are dropped; missing days come from the built-in layout
-    const sk = Rules.skeleton({city: c.city, start: c.start, end: c.end, hotel: c.hotel, arrival: c.arrival, departure: c.departure}, c.rules);
-    const days = sk.days.map(d=>clean.days.find(x=>x.date === d.date) || d);
-    storePlan(trip, c, days, r.provider + ' · ' + r.model, issue ? issue : (prev ? 'Re-planned with AI' : 'Planned with AI') + (j.summary ? ': ' + j.summary : ''),
-      {sources: (r.sources || []).slice(0, 15).concat(know && know.guide ? [{title: 'Wikivoyage: ' + know.guide.title, url: know.guide.url}] : []), used});
-    const probs = Rules.check({days}, c.rules, Object.assign({}, c, {weather: LOCAL_WEATHER[key]}));
-    const left = probs.filter(p=>p.level === 'error').length;
-    Busy.done((issue ? 'Plan changed' : 'Plan ready') + ' — by ' + r.provider + ' · ' + String(r.model).split('/').pop() + (r.noSearch ? ' (no web search: Gemini was busy)' : '') + (left ? ' · ' + left + ' rule break' + (left === 1 ? '' : 's') + ' left, see the checker' : ' · follows the rules'));
+    const j = got.j || {};
+    storePlan(trip, c, fixed.days, r.provider + ' · ' + r.model + (small ? ' + the app' : ''), issue ? issue : (prev ? 'Re-planned with AI' : 'Planned with AI') + (j.summary ? ': ' + j.summary : ''),
+      {sources: (r.sources || []).slice(0, 15).concat(know && know.guide ? [{title: 'Wikivoyage: ' + know.guide.title, url: know.guide.url}] : []), used, fixes: fixed.changes});
+    const errs = left.filter(p=>p.level === 'error').length;
+    Busy.done((issue ? 'Plan changed' : 'Plan ready') + ' — by ' + r.provider + ' · ' + String(r.model).split('/').pop() + (r.noSearch ? ' (no web search: Gemini was busy)' : '')
+      + (fixed.changes.length ? ' · the app fixed ' + countOf(fixed.changes.length, 'timing') : '')
+      + (small && small.failed ? ' · ' + countOf(small.failed, 'day') + ' left open' : '')
+      + (errs ? ' · ' + countOf(errs, 'rule break') + ' left, see the checker' : ' · follows the rules'));
     if(j.summary) toast(j.summary);
   }catch(e){
     if(e && e.code === 'cancelled') Busy.done('Stopped — the plan is unchanged', true);

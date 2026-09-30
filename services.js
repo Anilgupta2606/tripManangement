@@ -502,18 +502,32 @@ const Knowledge = (function(){
     return d.parse ? {title: d.parse.title, text: d.parse.wikitext['*']} : null;
   }
   /* -> {title, listings:[{kind, name, hours, price, note}], advice:{'Get around', 'Stay safe', ...}} */
-  async function guide(city){
-    const k = 'g:' + city.toLowerCase();
+  function listingsOf(text, area, max){
+    const out = [];
+    const re = /\{\{\s*(see|do|eat|drink|buy)\s*\|([\s\S]*?)\}\}/gi;          // sights, things to do, food, drink, shopping
+    let m;
+    while((m = re.exec(text)) && out.length < max){
+      const f = fields(m[2]);
+      if(!f.name) continue;
+      out.push({kind: m[1].toLowerCase(), name: f.name, hours: f.hours || '', price: f.price || '', note: (f.content || '').slice(0, 160), area: area || ''});
+    }
+    return out;
+  }
+  /* near: words of the hotel's address, so its own district comes first ("Bur Dubai") */
+  async function guide(city, near){
+    const k = 'g:' + city.toLowerCase() + '|' + String(near || '').toLowerCase();
     if(cache[k]) return cache[k];
     const page = await wikivoyage(city).catch(()=>null);
     if(!page) return cache[k] = null;
-    const listings = [];
-    const re = /\{\{\s*(see|do|eat|drink|buy)\s*\|([\s\S]*?)\}\}/gi;          // sights, things to do, food, drink, shopping
-    let m;
-    while((m = re.exec(page.text)) && listings.length < 60){
-      const f = fields(m[2]);
-      if(!f.name) continue;
-      listings.push({kind: m[1].toLowerCase(), name: f.name, hours: f.hours || '', price: f.price || '', note: (f.content || '').slice(0, 160)});
+    let listings = listingsOf(page.text, '', 60);
+    // a big city keeps its places in district pages ("Dubai/Bur Dubai", "Dubai/Deira"): read up to four, the hotel's first
+    if(listings.length < 10){
+      const esc = page.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const subs = Array.from(new Set((page.text.match(new RegExp('\\[\\[' + esc + '/[^\\]|#]+', 'g')) || []).map(x=>x.slice(2))));
+      const here = String(near || '').toLowerCase();
+      subs.sort((a, b)=>(here.indexOf(b.split('/').pop().toLowerCase()) >= 0) - (here.indexOf(a.split('/').pop().toLowerCase()) >= 0));
+      const pages = await Promise.all(subs.slice(0, 4).map(t=>wikivoyage(t).catch(()=>null)));
+      pages.forEach(p=>{ if(p) listings = listings.concat(listingsOf(p.text, p.title.split('/').pop(), 30)); });
     }
     const advice = {};
     ['See', 'Do', 'Eat', 'Get around', 'Stay safe', 'Respect', 'Cope'].forEach(h=>{
@@ -528,8 +542,9 @@ const Knowledge = (function(){
     if(cache[k]) return cache[k];
     const res = await fetch('https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gsradius=10000&gslimit=60&format=json&origin=*&gscoord=' + loc.lat + '%7C' + loc.lng);
     const d = await res.json();
-    const skip = /school|college|university|institute|hospital|constituency|assembly|court|office|ministry|bank|company|station$|depot|district|taluka|ward|panchayat|stadium|ground$|cricket|election|police/i;
-    return cache[k] = ((d.query || {}).geosearch || []).filter(g=>!skip.test(g.title)).map(g=>({name: g.title, km: Math.round(g.dist / 100) / 10}));
+    const skip = /school|college|university|institute|hospital|clinic|constituency|assembly|court|office|ministry|bank|company|station\b|metro\)|\bline\b|depot|district|taluka|ward|panchayat|stadium|ground$|cricket|election|police|embassy|consulate|centre for|center for|research|headquarters|interchange|junction|road$|street$|highway|flyover|bridge$|tower \d/i;
+    // "Al Karama, United Arab Emirates": a neighbourhood's article, not a place to visit
+    return cache[k] = ((d.query || {}).geosearch || []).filter(g=>!skip.test(g.title) && g.title.indexOf(', ') < 0).map(g=>({name: g.title, km: Math.round(g.dist / 100) / 10}));
   }
   /* Everything for a stay: -> {loc, hotelLoc, guide, nearby, used:[what was found]} */
   async function gather(city, country, hotel){
@@ -539,7 +554,8 @@ const Knowledge = (function(){
     const loc = hotelLoc || await cityLoc(city, country).catch(()=>null);
     // the guide for the hotel's own town too (a state or region page has few listings: "Goa" vs "Candolim")
     const town = hotelLoc && hotelLoc.city && hotelLoc.city.toLowerCase() !== city.toLowerCase() ? hotelLoc.city : '';
-    const [g0, gTown, n] = await Promise.all([guide(city).catch(()=>null), town ? guide(town).catch(()=>null) : null, loc ? nearby(loc).catch(()=>[]) : []]);
+    const near = [hotel && hotel.address, hotel && hotel.name, hotelLoc && hotelLoc.label].filter(Boolean).join(' ');
+    const [g0, gTown, n] = await Promise.all([guide(city, near).catch(()=>null), town ? guide(town, near).catch(()=>null) : null, loc ? nearby(loc).catch(()=>[]) : []]);
     let g = g0;
     if(gTown && gTown.listings.length){
       const seen = new Set();
@@ -554,7 +570,7 @@ const Knowledge = (function(){
   function forPrompt(k){
     if(!k) return '';
     const out = [];
-    if(k.guide && k.guide.listings.length) out.push('Travel guide (' + k.guide.title + ') - real places with opening hours:\n' + k.guide.listings.slice(0, 45).map(l=>`- ${l.name} [${l.kind}]${l.hours ? ' hours: ' + l.hours : ''}${l.price ? ' price: ' + l.price : ''}${l.note ? ' - ' + l.note : ''}`).join('\n'));
+    if(k.guide && k.guide.listings.length) out.push('Travel guide (' + k.guide.title + ') - real places with opening hours:\n' + k.guide.listings.slice(0, 45).map(l=>`- ${l.name} [${l.kind}]${l.area ? ' (' + l.area + ')' : ''}${l.hours ? ' hours: ' + l.hours : ''}${l.price ? ' price: ' + l.price : ''}${l.note ? ' - ' + l.note : ''}`).join('\n'));
     if(k.guide) Object.entries(k.guide.advice).forEach(([h, t])=>out.push(h + ' (guide): ' + t));
     if(k.nearby.length) out.push('Notable places near ' + (k.hotelLoc ? 'the hotel' : 'the city centre') + ' (km): ' + k.nearby.slice(0, 35).map(p=>p.name + ' ' + p.km).join(', '));
     return out.join('\n\n').slice(0, 9000);

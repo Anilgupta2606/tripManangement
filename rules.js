@@ -264,6 +264,151 @@ const Rules = (function(){
     return {days};
   }
 
+  /* ---------------------------------------------------------------- the fixer (no AI)
+     Moves whatever breaks a time rule to the first time that is allowed, keeping the order of the day: after landing
+     and the transfer, before leaving for the airport, inside the day, never overlapping and with the gap between
+     stops. What no longer fits goes to the nearest day with room, or is taken out. Too many sights on a day go to a
+     lighter day; a place already seen on an earlier day is taken out. Flights, transfers, check-in/out and locked
+     items never move. The same helpers schedule the places an AI picked into a day's open slots (fill).
+     -> {days, changes: [text]} */
+  const FIXED = it => !!it.locked || ['flight', 'transit', 'hotel'].indexOf(it.kind) >= 0;
+  const TRAVEL = k => k === 'transit' || k === 'flight';
+  const spanOf = it => { const s = toMin(it.start), e = toMin(it.end); return {s, e: s === null ? null : e !== null && e > s ? e : s + 30}; };
+  const lengthOf = it => { const s = toMin(it.start), e = toMin(it.end); return s !== null && e !== null && e > s ? e - s : it.kind === 'meal' ? 60 : 90; };
+  function windowOf(date, r, ctx){
+    let from = toMin(r.dayStart), until = toMin(r.dayEnd);
+    if(ctx.arrival && ctx.arrival.date === date && toMin(ctx.arrival.arr) !== null) from = Math.max(from, toMin(ctx.arrival.arr) + r.arrivalBufferMin + r.transferMin);
+    if(ctx.departure && ctx.departure.date === date && toMin(ctx.departure.dep) !== null){
+      const need = ctx.departure.international ? r.internationalAirportMin : r.domesticAirportMin;
+      until = Math.min(until, toMin(ctx.departure.dep) - need - r.transferMin);
+    }
+    return {from, until};
+  }
+  // the gap the checker wants between two stops that follow each other
+  const gapBetween = (a, b, r) => a && b && norm(a.place) !== norm(b.place) && ['meal', 'rest', 'free'].indexOf(b.kind) < 0 && !TRAVEL(a.kind) && !TRAVEL(b.kind) ? r.bufferMin : 0;
+  /* The first start >= earliest where `it` (for `len` minutes) fits among `busy` [{s, e, it}] and ends by `until`.
+     A sight or a meal may be shortened to 45 minutes to fit. -> {s, e} or null */
+  function slotFor(busy, it, len, earliest, until, r){
+    // a meal: a shorter one on time beats a full one late
+    if(it.kind === 'meal' && len > 45 && !r.noShort && !r.short){ const a = slotFor(busy, it, len, earliest, until, Object.assign({}, r, {noShort: 1})), b = slotFor(busy, it, 45, earliest, until, Object.assign({}, r, {short: 1})); return !a ? b : b && b.s < a.s ? b : a; }
+    for(const d of len > 45 && SIGHTS.has(it.kind) && !r.noShort ? [len, 45] : [len]){
+      let s = earliest;
+      for(let n = 0; n < 60; n++){
+        const hit = busy.find(b=>!(s >= b.e + gapBetween(b.it, it, r) || s + d + gapBetween(it, b.it, r) <= b.s));
+        if(!hit) break;
+        s = hit.e + gapBetween(hit.it, it, r);
+      }
+      if(s + d <= until) return {s, e: s + d};
+      // shorten to what is left, if that is still a real visit
+      if(SIGHTS.has(it.kind) && !r.noShort && until - s >= 45 && until - s < d && !busy.some(b=>!(s >= b.e + gapBetween(b.it, it, r) || until + gapBetween(it, b.it, r) <= b.s))) return {s, e: until};
+    }
+    return null;
+  }
+  const busyOf = (items, skip) => items.filter(x=>x !== skip && toMin(x.start) !== null).map(x=>Object.assign({it: x}, spanOf(x)));
+  const setTimes = (it, p) => { it.start = toTime(p.s); it.end = toTime(p.e); };
+  const niceDate = d => { const x = new Date(d + 'T00:00:00Z'); return x.getUTCDate() + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][x.getUTCMonth()]; };
+  const byStart = (a, b) => (toMin(a.start) || 0) - (toMin(b.start) || 0);
+
+  /* A day with its open slots filled: picks [{slot: id of an open ("free") item, item}] are laid one after another
+     inside that slot's hours; a slot that got picks goes. -> {day, unplaced: [item]} */
+  function fill(day, picks, rules, ctx){
+    const r = merge(rules), w = windowOf(day.date, r, ctx || {});
+    const items = day.items.map(x=>Object.assign({}, x)), unplaced = [];
+    const used = new Set(picks.map(p=>p.slot));
+    const slots = {};
+    items.forEach(x=>{ if(used.has(x.id) && x.kind === 'free') slots[x.id] = spanOf(x); });
+    let out = items.filter(x=>!slots[x.id]);
+    picks.forEach(p=>{
+      const slot = slots[p.slot] || {s: w.from, e: w.until};
+      const it = Object.assign({}, p.item);
+      const got = slotFor(busyOf(out), it, lengthOf(it), Math.max(slot.s, w.from), Math.min(slot.e, w.until), r);
+      if(got){ setTimes(it, got); out.push(it); } else unplaced.push(it);
+    });
+    out.sort(byStart);
+    return {day: Object.assign({}, day, {items: out}), unplaced};
+  }
+
+  function repair(plan, rules, ctx){
+    const r = merge(rules), changes = [];
+    ctx = ctx || {};
+    const days = ((plan && plan.days) || []).map(d=>Object.assign({}, d, {items: (d.items || []).map(x=>Object.assign({}, x))}));
+    const max = r.maxSights[r.pace] || 3;
+    const sightsOn = d => d.items.filter(x=>SIGHTS.has(x.kind)).length;
+    const homeless = [];
+    // 1. each day: the movable items, in their order, each at the first allowed time
+    days.forEach(day=>{
+      const w = windowOf(day.date, r, ctx);
+      // open blocks are only placeholders: they give way, and fill what time is left afterwards
+      const open = day.items.filter(x=>x.kind === 'free' && !x.locked);
+      const fixed = day.items.filter(FIXED), movable = day.items.filter(x=>!FIXED(x) && open.indexOf(x) < 0).sort(byStart);
+      const placed = fixed.slice();
+      let prev = null, cursor = w.from;
+      movable.forEach(it=>{
+        const was = it.start, wasEnd = it.end, own = toMin(it.start);
+        const earliest = Math.max(w.from, own === null ? cursor : own, prev ? cursor + gapBetween(prev, it, r) : w.from);
+        const got = slotFor(busyOf(placed), it, lengthOf(it), earliest, w.until, r);
+        if(!got){ homeless.push({it, from: day}); return; }
+        setTimes(it, got);
+        if(it.start !== was) changes.push(`Moved “${it.title}” on ${niceDate(day.date)} from ${was || 'no time'} to ${it.start}.`);
+        else if(it.end !== wasEnd && wasEnd) changes.push(`Shortened “${it.title}” on ${niceDate(day.date)} to end at ${it.end}.`);
+        placed.push(it); prev = it; cursor = got.e;
+      });
+      open.forEach(o=>{
+        const sp = spanOf(o);
+        if(sp.s === null) return;
+        // the longest free stretch inside the block's own hours, between what is planned (with the gaps)
+        const busy = busyOf(placed).sort((a, b)=>a.s - b.s);
+        let best = null, from = Math.max(sp.s, w.from);
+        busy.concat([{s: Math.min(sp.e, w.until), e: Infinity}]).forEach(bz=>{
+          const end = Math.min(bz.s - (bz.it ? r.bufferMin : 0), sp.e, w.until);
+          if(end - from >= 45 && (!best || end - from > best.e - best.s)) best = {s: from, e: end};
+          if(bz.it) from = Math.max(from, bz.e + r.bufferMin);
+        });
+        if(best){ setTimes(o, best); placed.push(o); }
+      });
+      day.items = placed.sort(byStart);
+    });
+    // 2. a day with too many sights passes its last ones on
+    days.forEach(day=>{
+      const extra = sightsOn(day) - max;
+      if(extra <= 0) return;
+      day.items.filter(x=>SIGHTS.has(x.kind) && !x.locked).slice(-extra).forEach(it=>{ day.items = day.items.filter(x=>x !== it); homeless.push({it, from: day, pace: true}); });
+    });
+    // 3. what did not fit: the nearest day with room (never a meal or an open block - every day has its own)
+    const di = d => days.indexOf(d);
+    const placeKey = it => norm(it.place || it.title);
+    const onAnother = (it, from) => days.some(d=>d !== from && d.items.some(x=>SIGHTS.has(x.kind) && placeKey(x) === placeKey(it)));
+    homeless.forEach(({it, from, pace})=>{
+      if(SIGHTS.has(it.kind) && placeKey(it) && onAnother(it, from)){ changes.push(`Took out “${it.title}” on ${niceDate(from.date)} — already on another day.`); return; }
+      if(!SIGHTS.has(it.kind)){ changes.push(`Took out “${it.title}” on ${niceDate(from.date)} — no time left for it that day.`); return; }
+      const order = days.filter(d=>d !== from).sort((a, b)=>Math.abs(di(a) - di(from)) - Math.abs(di(b) - di(from)) || di(a) - di(b));
+      for(const day of order){
+        if(sightsOn(day) >= max) continue;
+        const w = windowOf(day.date, r, ctx);
+        const got = slotFor(busyOf(day.items), it, lengthOf(it), w.from, w.until, r);
+        if(!got) continue;
+        const was = it.start; setTimes(it, got);
+        day.items.push(it); day.items.sort(byStart);
+        changes.push(`Moved “${it.title}” from ${niceDate(from.date)}${was ? ' ' + was : ''} to ${niceDate(day.date)} ${it.start}${pace ? ' (too many sights that day)' : ''}.`);
+        return;
+      }
+      if(pace){ from.items.push(it); from.items.sort(byStart); return; }        // nowhere lighter: it stays, the checker still says so
+      changes.push(`Took out “${it.title}” from ${niceDate(from.date)} — no room left on any day.`);
+    });
+    // 4. the same place twice: the later visit goes
+    const seen = {};
+    days.forEach(day=>{
+      day.items = day.items.filter(it=>{
+        if(!SIGHTS.has(it.kind) || it.locked) return true;
+        const k = norm(it.place || it.title);
+        if(!k) return true;
+        if(seen[k]){ changes.push(`Took out “${it.title}” on ${niceDate(day.date)} — already on ${niceDate(seen[k])}.`); return false; }
+        seen[k] = day.date; return true;
+      });
+    });
+    return {days, changes};
+  }
+
   /* ---------------------------------------------------------------- the documents checklist
      Rules say which documents a trip needs; the trip's documents tick them off by themselves. Every rule is editable. */
   const DOC_RULES = [
@@ -328,6 +473,6 @@ const Rules = (function(){
     return out;
   }
 
-  return {DEFAULTS, KINDS, merge, asPrompt, check, skeleton, clean, tripAnchors, toMin, toTime, addDays, daysBetween, DOC_RULES, WHEN, applies, checklist};
+  return {DEFAULTS, KINDS, merge, asPrompt, check, skeleton, clean, repair, fill, windowOf, tripAnchors, toMin, toTime, addDays, daysBetween, DOC_RULES, WHEN, applies, checklist};
 })();
 if(typeof module !== 'undefined') module.exports = Rules;
