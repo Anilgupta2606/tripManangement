@@ -548,3 +548,6 @@ fieldset.types p{ flex-basis: 100%; margin: 0; }
 .home-link:hover{ color: var(--ink); border-color: var(--border-strong); }
 .home-link svg{ width: 16px; height: 16px; }
 @media (max-width: 720px){ .home-link{ width: 38px; padding: 0; justify-content: center; } .home-link span{ display: none; } }
+
+.ok-text{ color: var(--good); }
+.key-state{ margin: -4px 0 14px; }

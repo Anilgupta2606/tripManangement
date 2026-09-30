@@ -507,7 +507,32 @@ Use "unknown" if you cannot find information for that exact date; "scheduled" if
     fr24: 'https://www.flightradar24.com/data/flights/' + encodeURIComponent(flight.toLowerCase()),
     google: 'https://www.google.com/search?q=' + encodeURIComponent(flight + ' flight status ' + (date || '')),
   });
-  return {status, links, aerodatabox, airlabs, route};
+  /* Does each flight key work? -> {airlabs: {ok, text}, aerodatabox: {ok, text}} (only for keys given).
+     AirLabs has a free check (/ping); AeroDataBox is asked about one airport (one unit of its free quota). */
+  async function testKeys(keys){
+    const out = {};
+    if(keys.airlabs){
+      try{
+        const d = await (await fetch('https://airlabs.co/api/v9/ping?api_key=' + encodeURIComponent(keys.airlabs))).json();
+        if(d.error) out.airlabs = {ok: false, text: /unknown_api_key|Unknown/i.test(d.error.code + d.error.message) ? 'AirLabs does not know this key — check it was copied whole.' : 'AirLabs: ' + (d.error.message || d.error.code)};
+        else {
+          const k = (d.request || {}).key || {};
+          const lim = k.limits_by_month || k.limits_total;
+          out.airlabs = {ok: true, text: 'Connected' + (k.type ? ' · ' + k.type + ' plan' : '') + (lim ? ' · ' + Number(lim).toLocaleString('en-IN') + ' checks a month' : '')};
+        }
+      }catch(e){ out.airlabs = {ok: false, text: 'Could not reach AirLabs (offline?).'}; }
+    }
+    if(keys.aerodatabox){
+      try{
+        const res = await fetch('https://aerodatabox.p.rapidapi.com/airports/iata/DEL', {headers: {'X-RapidAPI-Key': keys.aerodatabox, 'X-RapidAPI-Host': 'aerodatabox.p.rapidapi.com'}});
+        const left = res.headers.get('x-ratelimit-requests-remaining');
+        out.aerodatabox = res.ok ? {ok: true, text: 'Connected' + (left ? ' · ' + left + ' checks left this month' : '')}
+          : {ok: false, text: res.status === 401 || res.status === 403 ? 'RapidAPI refused this key — or it is not subscribed to AeroDataBox (free Basic plan).' : res.status === 429 ? 'Connected, but the monthly free limit is used up.' : 'AeroDataBox error ' + res.status};
+      }catch(e){ out.aerodatabox = {ok: false, text: 'Could not reach AeroDataBox (offline?).'}; }
+    }
+    return out;
+  }
+  return {status, links, aerodatabox, airlabs, route, testKeys};
 })();
 
 /* ================================================================ Knowledge: what the internet says about a place,

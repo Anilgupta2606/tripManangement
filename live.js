@@ -89,7 +89,7 @@ async function checkNews(trip, city, country){
 /* ================================================================ Flights */
 const STATE_TEXT = {'scheduled': ['Scheduled', 'ok'], 'on-time': ['On time', 'good'], 'delayed': ['Delayed', 'warn'], 'boarding': ['Boarding', 'good'], 'departed': ['Departed', 'good'],
   'airborne': ['In the air', 'good'], 'landed': ['Landed', 'ok'], 'cancelled': ['Cancelled', 'bad'], 'diverted': ['Diverted', 'bad'], 'not-operating': ['Not operating that day', 'bad'], 'unknown': ['No live data yet', 'muted']};
-let flightTimer = null;
+let flightTimer = null, flightKeyTesting = false;
 VIEWS.flights = function(main, cur){
   const all = cur ? flightsOf(cur.id) : flightsOf('');
   const upcoming = all.filter(f=>!f.date || f.date >= Rules.addDays(todayISO(), -1));
@@ -99,12 +99,16 @@ VIEWS.flights = function(main, cur){
   main.innerHTML = `
   <section class="section-head"><div><h1>${esc(cur ? cur.name : 'All flights')}</h1></div>
     <div class="row"><button class="btn primary" id="fl-all" ${upcoming.length && hasSource ? '' : 'disabled'}>${icon('refresh')} Check all</button><button class="btn soft" id="fl-add">${icon('plus')} Add a flight</button></div></section>
+  ${fk.airlabs || fk.aerodatabox ? `<p class="small key-state">Live status from: ${keyTestText() || `<span class="muted">${[fk.airlabs && 'AirLabs', fk.aerodatabox && 'AeroDataBox'].filter(Boolean).join(' and ')} — not tested yet</span>`} <button class="linkish small" id="fl-test">Test now</button></p>` : ''}
   ${!(fk.airlabs || fk.aerodatabox) ? `<section class="card notice"><b>For live status (delays, gates, cancellations) add a free AirLabs key</b> in <a href="#" id="fl-keys">Settings → Flight status</a>. Without it, flights more than 2 days away still get a free route check, and nearer ones are looked up by the AI.</section>` : ''}
   <section class="flight-list">${upcoming.map(flightCard).join('') || `<div class="card muted">No upcoming flights${cur ? ' in this trip' : ''}. Upload a ticket or boarding pass, or add a flight by number.</div>`}</section>
   ${past.length ? `<details class="past"><summary>Past flights (${past.length})</summary><section class="flight-list">${past.map(flightCard).join('')}</section></details>` : ''}
   <p class="muted small">Flights leaving within 36 hours are re-checked every 10 minutes while this tab is open.</p>`;
   if($('fl-keys')) $('fl-keys').onclick = e=>{ e.preventDefault(); openSettings('flights'); };
   $('fl-add').onclick = ()=>addFlight(cur);
+  if($('fl-test')) $('fl-test').onclick = async ()=>{ $('fl-test').textContent = 'Testing…'; await testFlightKeys(fk); render(); };
+  // saved keys never tested on this device: test once
+  if((fk.airlabs || fk.aerodatabox) && !keyTestText() && !flightKeyTesting){ flightKeyTesting = true; testFlightKeys(fk).finally(()=>{ flightKeyTesting = false; }); }
   $('fl-all').onclick = async ()=>{ for(const f of upcoming) await checkFlight(f); };
   main.querySelectorAll('[data-check]').forEach(b=>b.onclick = ()=>checkFlight(all.find(f=>f.key === b.dataset.check)));
   main.querySelectorAll('[data-open-doc]').forEach(b=>b.onclick = ()=>openViewer(b.dataset.openDoc));

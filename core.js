@@ -320,6 +320,23 @@ function tripSpan(trip){
   return {start: trip.start || ds[0] || '', end: trip.end || ds[ds.length - 1] || ''};
 }
 
+/* ---------------------------------------------------------------- flight keys: do they work? */
+const KEY_NAME = {airlabs: 'AirLabs', aerodatabox: 'AeroDataBox'};
+async function testFlightKeys(keys){
+  const r = await Flights.testKeys(keys);
+  LOCAL.flightKeyTest = {at: Date.now(), result: r, keys: Object.keys(r).filter(k=>keys[k]).map(k=>k + ':' + keys[k].slice(-4))};
+  saveLocal();
+  if(tab === 'flights') render();
+  return r;
+}
+/* The last test, if it was of the keys saved now -> html */
+function keyTestText(keys){
+  const t = LOCAL.flightKeyTest, fk = keys || S.settings.flightKeys || {};
+  if(!t || !t.result) return '';
+  return Object.entries(t.result).filter(([k])=>fk[k] && t.keys.indexOf(k + ':' + fk[k].slice(-4)) >= 0)
+    .map(([k, v])=>`<span class="${v.ok ? 'ok-text' : 'err'}">${v.ok ? '✓' : '✗'} ${esc(KEY_NAME[k])}: ${esc(v.text)}</span>`).join('<br>') + ` <span class="muted">· tested ${esc(ago(t.at))}</span>`;
+}
+
 /* ---------------------------------------------------------------- shell */
 const TABS = [
   {id: 'trips', label: 'Trips', icon: 'home'},
@@ -511,9 +528,10 @@ function openSettings(section){
         </select></label>
     </details>
     <details ${section === 'flights' ? 'open' : ''}><summary>${icon('plane')} Flight status</summary>
-      <p class="muted">Live status comes from a free flight-data key, else from Gemini searching the web. <b>AeroDataBox</b> (free on RapidAPI, a few hundred checks a month) works for any date; <b>AirLabs</b> (1,000 free a month) for flights in the next day or so.</p>
+      <p class="muted">Live status (delays, gates, cancellations) comes from <b>AirLabs</b> (free, 1,000 checks a month) or <b>AeroDataBox</b> (free on RapidAPI), from about 2 days before the flight. Further ahead, a free route check runs without any key. <b>Test keys</b> tells you whether a key works.</p>
       <label>AeroDataBox RapidAPI key <a class="small" href="https://rapidapi.com/aedbx-aedbx/api/aerodatabox" target="_blank" rel="noopener">get one</a><input id="k-adb" type="password" autocomplete="off" value="${esc(fk.aerodatabox || '')}"></label>
       <label>AirLabs key <a class="small" href="https://airlabs.co/signup" target="_blank" rel="noopener">get one</a><input id="k-al" type="password" autocomplete="off" value="${esc(fk.airlabs || '')}"></label>
+      <div class="row"><button type="button" class="btn soft small" id="k-test">${icon('refresh')} Test keys</button><span class="small" id="k-res">${keyTestText()}</span></div>
     </details>
     <details ${section === 'sync' ? 'open' : ''}><summary>${icon('sync')} Phone ↔ laptop sync</summary>
       ${Cloud.shared ? `<p class="muted">Your trips and documents are encrypted on this device, then kept in a private GitHub Gist, so the phone and the laptop see the same vault.</p>
@@ -567,6 +585,13 @@ function openSettings(section){
   };
   card.querySelector('#person-f').onsubmit = e=>{ e.preventDefault(); const n = $('person-n').value.trim(); if(n){ addPerson(n); save(); openSettings('people'); } };
   card.querySelectorAll('[data-del-person]').forEach(b=>b.onclick = ()=>{ remove('people', b.dataset.delPerson); save(); openSettings('people'); });
+  $('k-test').onclick = async ()=>{
+    const keys = {aerodatabox: $('k-adb').value.trim(), airlabs: $('k-al').value.trim()};
+    if(!keys.airlabs && !keys.aerodatabox){ $('k-res').textContent = 'Paste a key first.'; return; }
+    $('k-res').innerHTML = '<span class="spinner"></span> Testing…';
+    await testFlightKeys(keys);
+    if($('k-res')) $('k-res').innerHTML = keyTestText(keys);
+  };
   card.querySelector('#settings-save').onclick = ()=>{
     if($('ai-first')){                         // the key editor (only in a copy without the shared Setup)
       const o = Cloud.aiLocal(); o.keys = o.keys || {};
@@ -575,9 +600,13 @@ function openSettings(section){
       Cloud.saveAiLocal(o);
     }
     S.settings.readerMode = $('reader-mode').value;
+    const before = JSON.stringify(S.settings.flightKeys || {});
     S.settings.flightKeys = {aerodatabox: $('k-adb').value.trim(), airlabs: $('k-al').value.trim()};
     save({quiet: true});
     closeModal(); render(); toast('Settings saved.');
+    // new or changed flight keys: say at once whether they work
+    if(JSON.stringify(S.settings.flightKeys) !== before && (S.settings.flightKeys.airlabs || S.settings.flightKeys.aerodatabox))
+      testFlightKeys(S.settings.flightKeys).then(r=>{ const bad = Object.entries(r).filter(([, v])=>!v.ok); toast(bad.length ? KEY_NAME[bad[0][0]] + ': ' + bad[0][1].text : 'Flight keys connected ✓', bad.length ? 'error' : ''); });
   };
   const on = async (token, pass)=>{
     if(!token || !pass) return toast('Enter both the token and the passphrase.', 'error');
