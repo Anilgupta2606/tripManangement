@@ -454,7 +454,7 @@ const Flights = (function(){
     const system = `You check the current status of a flight using Google Search (airline site, FlightAware, Flightradar24, airport sites, news). Answer with JSON only:
 {"state":"scheduled"|"on-time"|"delayed"|"boarding"|"departed"|"airborne"|"landed"|"cancelled"|"diverted"|"not-operating"|"unknown","delayMin":0,"dep":{"airport":"IATA","scheduled":"HH:MM","estimated":"HH:MM","terminal":"","gate":""},"arr":{"airport":"IATA","scheduled":"HH:MM","estimated":"HH:MM"},"note":"one line: what you found and how sure you are"}
 Use "unknown" if you cannot find information for that exact date; "scheduled" if the flight operates that day but nothing live is reported yet.`;
-    const r = await Cloud.chat(system, [{role: 'user', content: `Flight ${flight} on ${date}${seg && seg.from ? ' from ' + seg.from + ' to ' + seg.to : ''}. Today is ${new Date().toISOString()}.`}], {search: true});
+    const r = await Cloud.chat(system, [{role: 'user', content: `Flight ${flight} on ${date}${seg && seg.from ? ' from ' + seg.from + ' to ' + seg.to : ''}. Today is ${new Date().toISOString()}.`}], {search: true, tier: 'fast'});
     const j = Cloud.json(r.text);
     return Object.assign({state: 'unknown', delayMin: 0, dep: {}, arr: {}}, j, {source: 'AI web search (' + r.provider + ')', sources: r.sources || [], at: Date.now(), approximate: true});
   }

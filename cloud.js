@@ -229,10 +229,18 @@ const Cloud = (function(){
     {id:'cerebras', name:'Cerebras', signupUrl:'https://cloud.cerebras.ai', placeholder:'csk-…', models:['gpt-oss-120b','llama-3.3-70b','llama3.1-8b']},
     {id:'mistral', name:'Mistral', signupUrl:'https://console.mistral.ai/api-keys', placeholder:'key', models:['mistral-small-latest','mistral-medium-latest']},
     {id:'openrouter', name:'OpenRouter', signupUrl:'https://openrouter.ai/keys', placeholder:'sk-or-…', models:['openrouter/free','meta-llama/llama-3.3-70b-instruct:free']},
+    {id:'ollama', name:'Local (Ollama)', signupUrl:'https://ollama.com', placeholder:'http://localhost:11434', models:['gemma3:4b'], keyless:true},
     {id:'anthropic', name:'Anthropic Claude (paid)', signupUrl:'https://console.anthropic.com/settings/keys', placeholder:'sk-ant-…', models:['claude-haiku-4-5-20251001'], vision:true},
-    {id:'ollama', name:'Local (Ollama)', signupUrl:'https://ollama.com', placeholder:'http://localhost:11434', models:[], keyless:true},
   ];
   const OPENAI_BASE = {groq:'https://api.groq.com/openai/v1', cerebras:'https://api.cerebras.ai/v1', mistral:'https://api.mistral.ai/v1', openrouter:'https://openrouter.ai/api/v1'};
+  const SYNCED_AI = 'tripvault-ai-synced';
+  /* The keys this device uses, to carry to your other devices inside the encrypted sync (not Ollama: it is this computer's). */
+  function shareableAi(){
+    const s = aiSettings(), keys = {};
+    Object.entries(s.keys).forEach(([id, k])=>{ if(id !== 'ollama' && s.from[id] !== 'synced') keys[id] = k; });
+    return {keys, order: s.order, model: s.model};
+  }
+  const takeSyncedAi = a => lsSet(SYNCED_AI, a && a.keys ? a : undefined);
   const AI_KEY = 'tripvault-ai', REST_KEY = 'tripvault-ai-rest', MODELS_KEY = 'tripvault-ai-models';
   const aiLocal = () => lsGet(AI_KEY, {keys:{}, order:[], off:[]});
   const saveAiLocal = s => lsSet(AI_KEY, s);
@@ -240,19 +248,26 @@ const Cloud = (function(){
   async function loadAi(){ const et = await expenseTracker(); etAi = et ? et.ai : null; return aiSettings(); }
   function aiSettings(){
     const own = aiLocal(), et = etAi || {keys:{}, order:[], off:[], model:{}}, led = lsGet('ledger-ai', {keys:{}, order:[], off:[]});
+    const synced = lsGet(SYNCED_AI, {keys:{}});            // keys from your other device, through the encrypted sync
     const keys = {}, from = {};
     PROVIDERS.forEach(p=>{
       const mine = String((own.keys || {})[p.id] || '').trim(), theirs = String((et.keys || {})[p.id] || '').trim(), ledger = String((led.keys || {})[p.id] || '').trim();
       if(mine){ keys[p.id] = mine; from[p.id] = 'trip-vault'; }
       else if(theirs){ keys[p.id] = theirs; from[p.id] = 'expense-tracker'; }
       else if(ledger){ keys[p.id] = ledger; from[p.id] = 'ledger'; }
+      else if((synced.keys || {})[p.id]){ keys[p.id] = String(synced.keys[p.id]); from[p.id] = 'synced'; }
     });
-    const order = (own.order && own.order.length ? own.order : et.order || []).filter(id=>PROVIDERS.some(p=>p.id === id));
+    // the order: free services first, then this computer's, then the paid one (as ATS does) - or the Expense Tracker's own order
+    let order = (own.order && own.order.length ? own.order : et.order || []).filter(id=>PROVIDERS.some(p=>p.id === id));
     PROVIDERS.forEach(p=>{ if(order.indexOf(p.id) < 0) order.push(p.id); });
     const off = own.order && own.order.length ? (own.off || []) : (et.off || []);
-    return {keys, from, order, off, model: Object.assign({}, et.model || {}, own.model || {})};
+    // "which goes first": auto, or one picked by hand; the others follow only if fallback is on
+    const first = own.first && own.first !== 'auto' && PROVIDERS.some(p=>p.id === own.first) ? own.first : 'auto';
+    const fallback = own.fallback !== false;
+    if(first !== 'auto') order = [first].concat(order.filter(id=>id !== first));
+    return {keys, from, order, off, first, fallback, model: Object.assign({}, et.model || {}, own.model || {})};
   }
-  const usable = s => s.order.filter(id=>s.off.indexOf(id) < 0 && s.keys[id]);
+  const usable = s => { const u = s.order.filter(id=>s.off.indexOf(id) < 0 && s.keys[id]); return s.first !== 'auto' && !s.fallback ? u.filter(id=>id === s.first) : u; };
   const aiAvailable = () => usable(aiSettings()).length > 0;
   const aiNames = () => usable(aiSettings()).map(id=>PROVIDERS.find(p=>p.id === id).name);
   const canSee = () => usable(aiSettings()).some(id=>PROVIDERS.find(p=>p.id === id).vision);
@@ -339,21 +354,32 @@ const Cloud = (function(){
   const PREFER = ['gpt-oss-120b','kimi-k2','qwen3-235b','qwen-3-235b','llama-4-maverick','deepseek-v3','llama-3.3-70b','mistral-large','mistral-medium','qwen3-32b','qwen-3-32b','llama-4-scout','mistral-small','gpt-oss-20b','gemma-3-27b','ministral-8b','llama-3.1-8b','llama3.1-8b'];
   const sizeB = m => Number((m.match(/(\d+(?:\.\d+)?)b\b/i) || [])[1] || 0);
   const verOf = m => Number((m.match(/(\d+(?:\.\d+)?)/) || [])[1] || 0);
-  const prefIdx = m => { const i = PREFER.findIndex(p=>m.toLowerCase().indexOf(p) >= 0); return i < 0 ? PREFER.length : i; };
-  function rankModels(id, names){
+  // for quick tasks: the mid-size models ATS found answer fastest and still well
+  const FAST_PREFER = ['gpt-oss-20b','ministral-3b','ministral-8b','qwen3-32b','qwen-3-32b','llama-3.1-8b','llama3.1-8b','gemma-3-27b','mistral-small','llama-4-scout','llama-3.3-70b','gpt-oss-120b'];
+  const prefIdx = (m, list) => { list = list || PREFER; const i = list.findIndex(p=>m.toLowerCase().indexOf(p) >= 0); return i < 0 ? list.length : i; };
+  /* The best models first, for a kind of task: "smart" (reading documents, planning, news) wants the strongest,
+     "fast" (a flight check) a quick one - the same split ATS makes. */
+  function rankModels(id, names, tier){
+    const fast = tier === 'fast';
     const uniq = Array.from(new Set(names)).filter(m=>!NOT_CHAT.test(m));
     if(id === 'gemini'){
-      const g = uniq.filter(m=>/^gemini/.test(m) && !/gemma|nano|tuning|image|tts/.test(m));
-      const preview = m => /preview|exp|thinking/.test(m) ? 1 : 0, kind = m => /lite/.test(m) ? 2 : /flash/.test(m) ? 3 : /pro/.test(m) ? 1 : 0, alias = m => /-latest$/.test(m);
-      const newest = k => Math.max.apply(null, [0].concat(g.filter(m=>!alias(m) && !preview(m) && kind(m) === k).map(verOf)));
-      const score = m => [preview(m), -kind(m), -(alias(m) ? newest(kind(m)) : verOf(m)), alias(m) ? 1 : 0];
+      const g = uniq.filter(m=>/^gemini/.test(m) && !/gemma|nano|tuning|image|tts|embedding|live|audio|robotics|computer|deep-research|antigravity/.test(m));
+      const kind = m => /lite/.test(m) ? 'lite' : /flash/.test(m) ? 'flash' : /pro/.test(m) ? 'pro' : 'other';
+      const RANK = fast ? {lite: 0, flash: 1, pro: 3, other: 4} : {flash: 0, pro: 1, lite: 2, other: 4};
+      const alias = m => /-latest$/.test(m), preview = m => /preview|exp/.test(m) ? 1 : 0;
+      const newest = k => Math.max.apply(null, [0].concat(g.filter(m=>!alias(m) && kind(m) === k).map(verOf)));
+      const ver = m => alias(m) ? newest(kind(m)) : verOf(m);
+      // newest version first; at the same version a named model before the -latest alias, and a stable one before a preview
+      const score = m => [RANK[kind(m)], -ver(m), alias(m) ? 1 : 0, preview(m)];
       return g.sort((a, b)=>{ const x = score(a), y = score(b); for(let i = 0; i < x.length; i++) if(x[i] !== y[i]) return x[i] - y[i]; return a.localeCompare(b); });
     }
-    if(id === 'anthropic'){ const tier = m => /haiku/.test(m) ? 0 : /sonnet/.test(m) ? 1 : 2; return uniq.filter(m=>/^claude/.test(m) && !/opus/.test(m)).sort((a, b)=>tier(a) - tier(b)); }
-    if(id === 'ollama') return uniq.sort((a, b)=>(sizeB(a) || 99) - (sizeB(b) || 99));
+    if(id === 'anthropic'){ const t = m => /haiku/.test(m) ? (fast ? 0 : 1) : /sonnet/.test(m) ? (fast ? 1 : 0) : 2; return uniq.filter(m=>/^claude/.test(m) && !/opus/.test(m)).sort((a, b)=>t(a) - t(b) || b.localeCompare(a)); }
+    if(id === 'ollama') return uniq.sort((a, b)=>fast ? (sizeB(a) || 99) - (sizeB(b) || 99) : (sizeB(b) || 0) - (sizeB(a) || 0));
     let list = uniq;
     if(id === 'openrouter') list = uniq.filter(m=>/:free$/.test(m) || m === 'openrouter/free');
-    const ranked = list.filter(m=>m !== 'openrouter/free').sort((a, b)=>prefIdx(a) - prefIdx(b) || sizeB(b) - sizeB(a) || a.localeCompare(b));
+    const ranked = list.filter(m=>m !== 'openrouter/free').sort(fast
+      ? (a, b)=>prefIdx(a, FAST_PREFER) - prefIdx(b, FAST_PREFER) || (sizeB(a) || 50) - (sizeB(b) || 50)
+      : (a, b)=>prefIdx(a) - prefIdx(b) || sizeB(b) - sizeB(a) || a.localeCompare(b));
     return id === 'openrouter' && list.indexOf('openrouter/free') >= 0 ? ranked.slice(0, 3).concat(['openrouter/free'], ranked.slice(3)) : ranked;
   }
   async function listModels(id, key){
@@ -368,21 +394,33 @@ const Cloud = (function(){
     if(id === 'ollama') return (d.models || []).map(m=>m.name);
     return (d.data || []).map(m=>m.id);
   }
-  async function bestModels(id, key){
+  /* What a key can use (asked once a day), ranked for the task. */
+  async function bestModels(id, key, tier){
     const cache = lsGet(MODELS_KEY, {}), c = cache[id], tag = key.slice(-6);
-    if(c && c.key === tag && Date.now() - c.at < 86400000 && c.models.length) return c.models;
-    try{
-      const ranked = rankModels(id, await listModels(id, key));
-      if(ranked.length){ cache[id] = {at:Date.now(), key:tag, models:ranked}; lsSet(MODELS_KEY, cache); return ranked; }
-    }catch(e){}
-    return PROVIDERS.find(p=>p.id === id).models;
+    let names = c && c.key === tag && Date.now() - c.at < 86400000 && c.names && c.names.length ? c.names : null;
+    if(!names){
+      try{ names = await listModels(id, key); if(names.length){ cache[id] = {at: Date.now(), key: tag, names}; lsSet(MODELS_KEY, cache); } }catch(e){ names = null; }
+    }
+    const ranked = names ? rankModels(id, names, tier) : [];
+    return ranked.length ? ranked : PROVIDERS.find(p=>p.id === id).models;
   }
-
-  const chosen = {};
-  /* -> {text, sources, provider, model}. Tries each service in order; moves on when one is out of quota or busy.
+  /* Which model answered last, per service and kind of task (tried first next time), and models a key cannot use (skipped for a day). */
+  const WORKING_KEY = 'tripvault-ai-working', BAD_KEY = 'tripvault-ai-bad';
+  function remember(id, tier, model){ const w = lsGet(WORKING_KEY, {}); w[id] = Object.assign({}, w[id], {[tier]: model, at: Date.now()}); lsSet(WORKING_KEY, w); }
+  function markBad(id, model){ const b = lsGet(BAD_KEY, {}); b[id + '|' + model] = Date.now() + 86400000; lsSet(BAD_KEY, b); }
+  const isBad = (id, model) => (lsGet(BAD_KEY, {})[id + '|' + model] || 0) > Date.now();
+  /* What answers now, for the settings: [{id, name, model, resting}] in the order they are tried. */
+  function aiStatus(){
+    const s = aiSettings(), w = lsGet(WORKING_KEY, {});
+    return usable(s).map(id=>({id, name: PROVIDERS.find(p=>p.id === id).name, model: (w[id] || {}).smart || '', resting: resting(id)}));
+  }
+  /* -> {text, sources, provider, model}. The best service first and its best model first (the one that answered
+     last time, else the strongest the key can use), then the next model, then the next service - the way ATS picks.
+     A service out of free quota rests 15 minutes. opts.tier: 'smart' (default) or 'fast'.
      opts.images: only services that can see are tried. opts.search: only Gemini (Google Search) is tried. */
   async function chat(system, turns, opts, signal){
     opts = opts || {};
+    const tier = opts.tier === 'fast' ? 'fast' : 'smart';
     const s = aiSettings();
     let order = usable(s);
     if(opts.images && opts.images.length) order = order.filter(id=>PROVIDERS.find(p=>p.id === id).vision);
@@ -390,22 +428,26 @@ const Cloud = (function(){
     if(!order.length) throw new Error(opts.search ? 'Web search needs a Google Gemini key (free) — add one in Settings → AI.'
       : opts.images ? 'Reading a picture needs a Gemini or Claude key.' : 'Add a free AI key in Settings → AI (or in the Expense Tracker).');
     const skipped = []; let lastError = null;
+    const working = lsGet(WORKING_KEY, {});
     for(const id of order){
       const r = resting(id);
       if(r){ skipped.push(PROVIDERS.find(p=>p.id === id).name + ' is resting (' + r.why + ')'); continue; }
       const key = s.keys[id];
       const pinned = s.model[id] && s.model[id] !== 'auto' ? [s.model[id]] : [];
-      const models = Array.from(new Set(pinned.concat(chosen[id] ? [chosen[id]] : [], await bestModels(id, key), PROVIDERS.find(p=>p.id === id).models))).slice(0, 4);
+      const last = (working[id] || {})[tier];
+      const models = Array.from(new Set(pinned.concat(last ? [last] : [], await bestModels(id, key, tier), PROVIDERS.find(p=>p.id === id).models)))
+        .filter(m=>pinned.indexOf(m) >= 0 || !isBad(id, m)).slice(0, 5);
       for(const model of models){
         try{
           const out = await callOne(id, key, model, system, turns, opts, signal);
-          chosen[id] = model; wake(id);
+          remember(id, tier, model); wake(id);
           return Object.assign(out, {provider: PROVIDERS.find(p=>p.id === id).name, model});
         }catch(e){
           if(e.code === 'cancelled') throw e;
           lastError = e;
-          if(!e.unavailable){ skipped.push(e.message); break; }
-          if(e.limit){ rest(id, e.message); break; }
+          if(!e.unavailable){ skipped.push(e.message); break; }        // the key itself was refused
+          if(e.status === 404) markBad(id, model);                      // this key cannot use that model
+          if(e.limit){ rest(id, e.message); break; }                    // out of free quota: next service
         }
       }
     }
@@ -431,5 +473,5 @@ const Cloud = (function(){
 
   return {expenseTracker, checkLogin, loginSource, sha256,
           syncConfig, saveSyncConfig, otherAppSync, syncNow, markSaved, forgetSync, uploadFile, downloadFile, deleteFile,
-          PROVIDERS, loadAi, aiSettings, aiLocal, saveAiLocal, aiAvailable, aiNames, canSee, canSearch, resting, wake, chat, json, b64, unb64};
+          PROVIDERS, loadAi, aiSettings, aiStatus, rankModels, shareableAi, takeSyncedAi, aiLocal, saveAiLocal, aiAvailable, aiNames, canSee, canSearch, resting, wake, chat, json, b64, unb64};
 })();

@@ -128,6 +128,12 @@ function mergeData(mine, theirs){
   out.plans = Object.assign({}, theirs.plans || {});
   Object.entries(mine.plans || {}).forEach(([k, p])=>{ if(!out.plans[k] || (p.updatedAt || 0) >= (out.plans[k].updatedAt || 0)) out.plans[k] = p; });
   Object.keys(out.plans).forEach(k=>{ if(out.deleted[k]) delete out.plans[k]; });
+  // settings: this device's, but keys either device has are kept (this device's win)
+  const ms = mine.settings || {}, ts = theirs.settings || {};
+  out.settings = Object.assign({}, ts, ms);
+  out.settings.flightKeys = Object.assign({}, ts.flightKeys || {}, Object.fromEntries(Object.entries(ms.flightKeys || {}).filter(([, v])=>v)));
+  if(ms.sharedAi || ts.sharedAi) out.settings.sharedAi = Object.assign({}, ts.sharedAi || {}, ms.sharedAi || {},
+    {keys: Object.assign({}, (ts.sharedAi || {}).keys || {}, (ms.sharedAi || {}).keys || {})});
   return out;
 }
 
@@ -138,11 +144,21 @@ async function autoSync(manual){
   syncing = true; setSyncBadge('busy');
   try{
     await pushFiles();
+    // your AI and flight keys travel with the data (encrypted), so the phone needs no setup; switch off in Settings
+    if(S.settings.shareKeys !== false){
+      const ai = Cloud.shareableAi();
+      if(Object.keys(ai.keys).length && JSON.stringify(ai) !== JSON.stringify(S.settings.sharedAi || null)){ S.settings.sharedAi = ai; Cloud.markSaved(); await Store.put('state', S); }
+    } else if(S.settings.sharedAi){ delete S.settings.sharedAi; Cloud.markSaved(); await Store.put('state', S); }
     const result = await Cloud.syncNow(()=>S, async data=>{
-      const keep = S.settings;
+      const keep = S.settings, theirs = data.settings || {};
       S = Object.assign(EMPTY(), data);
-      S.settings = Object.assign({}, data.settings || {}, {flightKeys: keep.flightKeys, lastTrip: keep.lastTrip, readerMode: keep.readerMode});
+      // this device's own choices win; keys it does not have come from the other device
+      const fk = Object.assign({}, theirs.flightKeys || {});
+      Object.entries(keep.flightKeys || {}).forEach(([k, v])=>{ if(v) fk[k] = v; });
+      S.settings = Object.assign({}, EMPTY().settings, theirs, {flightKeys: fk, lastTrip: keep.lastTrip, readerMode: keep.readerMode || theirs.readerMode});
+      Cloud.takeSyncedAi(theirs.shareKeys === false ? null : theirs.sharedAi);
       await Store.put('state', S);
+      render();
     }, mergeData);
     setSyncBadge('ok');
     if(result === 'pulled' || result === 'merged'){ render(); if(manual) toast('Brought in the changes from your other device.'); }
@@ -301,7 +317,7 @@ function shell(){
   $('settings-btn').onclick = ()=>openSettings();
   $('trip-pick').onchange = e=>{ if(e.target.value === '__new') { e.target.value = S.settings.lastTrip || ''; VIEWS.newTrip(); } else setTrip(e.target.value); };
   $('modal').addEventListener('click', e=>{ if(e.target.id === 'modal') closeModal(); });
-  document.addEventListener('keydown', e=>{ if(e.key === 'Escape'){ if(!$('viewer').hidden) closeViewer(); else if(!$('modal').hidden) closeModal(); } });
+  document.addEventListener('keydown', e=>{ if(e.key === 'Escape'){ if(!$('modal').hidden) closeModal(); else if(!$('viewer').hidden) closeViewer(); } });   // the top one first
   window.addEventListener('hashchange', ()=>{ const t = location.hash.slice(1).split('/')[0]; if(TABS.some(x=>x.id === t) && t !== tab){ tab = t; render(); } });
   setSyncBadge(Cloud.syncConfig() ? 'ok' : 'off');
 }
@@ -383,8 +399,14 @@ function openSettings(section){
     <details ${!section || section === 'ai' ? 'open' : ''}><summary>${icon('spark')} AI assistants</summary>
       <p class="muted">Free AI keys read your documents, plan the itinerary and summarise the news. ${Object.values(ai.from).some(f=>f !== 'trip-vault') ? 'Keys from your Expense Tracker / Ledger in this browser are used automatically.' : 'Keys you added in the Expense Tracker are used here too, in the same browser.'}
       A <b>Google Gemini</b> key is the most useful: it reads photos and scans, and can search the web for live news and flight status.</p>
-      <div class="keys">${Cloud.PROVIDERS.map(p=>`<label class="key-row"><span>${esc(p.name)} ${ai.from[p.id] && ai.from[p.id] !== 'trip-vault' ? `<em class="chip soft">from ${ai.from[p.id] === 'ledger' ? 'Ledger' : 'Expense Tracker'}</em>` : ''} <a href="${p.signupUrl}" target="_blank" rel="noopener" class="small">get a key</a></span>
+      <div class="keys">${Cloud.PROVIDERS.map(p=>`<label class="key-row"><span>${esc(p.name)} ${ai.from[p.id] && ai.from[p.id] !== 'trip-vault' ? `<em class="chip soft">from ${ai.from[p.id] === 'ledger' ? 'Ledger' : ai.from[p.id] === 'synced' ? 'your other device' : 'Expense Tracker'}</em>` : ''} <a href="${p.signupUrl}" target="_blank" rel="noopener" class="small">get a key</a></span>
         <input data-ai="${p.id}" type="password" autocomplete="off" placeholder="${esc(ai.from[p.id] && ai.from[p.id] !== 'trip-vault' ? '(using the other app’s key)' : p.placeholder)}" value="${esc((own.keys || {})[p.id] || '')}"></label>`).join('')}</div>
+      <div class="grid2">
+        <label>Which AI goes first
+          <select id="ai-first"><option value="auto">Auto — the best one that answers, free ones first</option>${Cloud.PROVIDERS.map(p=>`<option value="${p.id}"${ai.first === p.id ? ' selected' : ''}${ai.keys[p.id] ? '' : ' disabled'}>${esc(p.name)}${ai.keys[p.id] ? '' : ' (no key)'}</option>`).join('')}</select></label>
+        <label class="check" style="align-self:end"><input type="checkbox" id="ai-fallback" ${ai.fallback ? 'checked' : ''}> If it fails or is out of quota, try the others</label>
+      </div>
+      <p class="muted small">${Cloud.aiStatus().length ? 'Tried in this order: ' + Cloud.aiStatus().map(x=>esc(x.name) + (x.model ? ' <em>(' + esc(x.model) + ')</em>' : '') + (x.resting ? ' — resting' : '')).join(' → ') + '. Each tries its best model first, then the next.' : 'No AI set up yet.'}</p>
       <label>Document reader
         <select id="reader-mode">
           <option value="builtin-ai">Built-in reader first, then AI fills the gaps (recommended)</option>
@@ -400,6 +422,7 @@ function openSettings(section){
     <details ${section === 'sync' ? 'open' : ''}><summary>${icon('sync')} Phone ↔ laptop sync</summary>
       <p class="muted">Your trips and documents are encrypted on this device with a passphrase, then kept in private GitHub Gists. Use the same token and passphrase on the phone and they see the same vault. GitHub only ever holds unreadable data.</p>
       ${sync ? `<p>Sync is <b>on</b>${sync.syncedAt ? ' · last synced ' + esc(ago(sync.syncedAt)) : ''}${sync.lastError ? `<br><span class="err">${esc(sync.lastError)}</span>` : ''}</p>
+        <label class="check"><input type="checkbox" id="share-keys" ${S.settings.shareKeys === false ? '' : 'checked'}> Carry my AI and flight keys to my other devices (inside the encrypted sync)</label>
         <div class="row"><button class="btn primary" id="sync-now">${icon('sync')} Sync now</button><button class="btn ghost" id="sync-off">Turn off on this device</button></div>`
       : `${other ? `<button class="btn soft" id="sync-reuse">Use the same sync as my Expense Tracker / Ledger</button><p class="muted small">or enter them:</p>` : ''}
         <label>GitHub token (fine-grained, permission “Gists: read and write”) <a class="small" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">create</a><input id="s-token" type="password" autocomplete="off"></label>
@@ -444,6 +467,7 @@ function openSettings(section){
   card.querySelector('#settings-save').onclick = ()=>{
     const o = Cloud.aiLocal(); o.keys = o.keys || {};
     card.querySelectorAll('[data-ai]').forEach(i=>{ const v = i.value.trim(); if(v) o.keys[i.dataset.ai] = v; else delete o.keys[i.dataset.ai]; });
+    o.first = $('ai-first').value; o.fallback = $('ai-fallback').checked;
     Cloud.saveAiLocal(o);
     S.settings.readerMode = $('reader-mode').value;
     S.settings.flightKeys = {aerodatabox: $('k-adb').value.trim(), airlabs: $('k-al').value.trim()};
@@ -458,6 +482,7 @@ function openSettings(section){
   };
   if(card.querySelector('#sync-on')) card.querySelector('#sync-on').onclick = ()=>on($('s-token').value.trim(), $('s-pass').value);
   if(card.querySelector('#sync-reuse')) card.querySelector('#sync-reuse').onclick = ()=>on(other.token, other.pass);
+  if(card.querySelector('#share-keys')) card.querySelector('#share-keys').onchange = e=>{ S.settings.shareKeys = e.target.checked; save({quiet: true}); };
   if(card.querySelector('#sync-now')) card.querySelector('#sync-now').onclick = ()=>{ closeModal(); autoSync(true); };
   if(card.querySelector('#sync-off')) card.querySelector('#sync-off').onclick = ()=>{ Cloud.forgetSync(); setSyncBadge('off'); openSettings('sync'); };
   card.querySelector('#backup').onclick = ()=>{
@@ -495,8 +520,7 @@ async function start(){
   const h = location.hash.slice(1).split('/')[0];
   if(TABS.some(t=>t.id === h)) tab = h;
   render();
-  Cloud.loadAi().then(()=>render());
-  autoSync();
+  Cloud.loadAi().then(()=>{ render(); autoSync(); });      // the other apps' keys are known before the first sync
   document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'visible') autoSync(); });
 }
 window.addEventListener('DOMContentLoaded', async function boot(){

@@ -140,7 +140,7 @@ main:focus{ outline: none; }
   background: var(--ink); color: var(--bg); padding: 11px 16px; border-radius: 12px; max-width: min(92vw, 520px); font-weight: 600; box-shadow: 0 8px 30px rgb(0 0 0 / .25); }
 .toast.show{ opacity: 1; transform: translate(-50%, 0); }
 .toast.error{ background: var(--bad); color: #fff; }
-.modal{ position: fixed; inset: 0; z-index: 50; background: rgb(10 15 20 / .45); display: grid; place-items: center; padding: 16px; }
+.modal{ position: fixed; inset: 0; z-index: 70; background: rgb(10 15 20 / .45); display: grid; place-items: center; padding: 16px; }
 .modal[hidden]{ display: none; }
 .modal-card{ position: relative; background: var(--surface); border-radius: 18px; width: min(560px, 100%); max-height: calc(100dvh - 32px); overflow: auto; padding: 22px; box-shadow: 0 20px 60px rgb(0 0 0 / .3); }
 .modal-card.wide{ width: min(900px, 100%); }
@@ -164,9 +164,9 @@ main:focus{ outline: none; }
 .v-page{ background: #fff; box-shadow: 0 2px 10px rgb(0 0 0 / .15); max-width: 100%; height: auto; }
 .v-img{ max-width: 100%; height: auto; object-fit: contain; }
 .viewer-facts{ overflow: auto; padding: 16px; border-left: 1px solid var(--border); background: var(--surface); }
-.viewer-facts dl{ display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0 0 12px; font-size: 14px; }
+.viewer-facts dl{ display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; margin: 0 0 12px; font-size: 14px; }
 .viewer-facts dt{ color: var(--muted); font-weight: 600; font-family: var(--f-mono); font-size: 12px; padding-top: 2px; }
-.viewer-facts dd{ margin: 0; }
+.viewer-facts dd{ margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .viewer.bright{ background: #fff; }
 .viewer.bright .viewer-body{ background: #fff; filter: contrast(1.1); }
 .viewer.bright .viewer-facts{ display: none; }
@@ -342,6 +342,11 @@ main:focus{ outline: none; }
   .seg [data-s="date"]{ grid-column: span 2; }
   .seg-x, .seg .icon-btn{ justify-self: end; }
   .viewer{ grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
+  /* the title on its own line, the buttons in a row under it: all of them reachable on a phone */
+  .viewer-bar{ flex-wrap: wrap; row-gap: 6px; }
+  .viewer-title{ flex: 1 1 calc(100% - 50px); }
+  .viewer-bar .btn, .viewer-bar #v-del{ order: 1; }
+  .viewer-bar .btn{ flex: 1; }
   .viewer-facts{ border-left: 0; border-top: 1px solid var(--border); max-height: 34dvh; }
   .hide-sm{ display: none; }
   .item{ grid-template-columns: 50px 1fr; }
