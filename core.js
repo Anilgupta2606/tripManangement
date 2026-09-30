@@ -339,6 +339,16 @@ function currentTrip(){
   }
   return t || null;
 }
+/* The address says where to open: #plan, #docs, #docs/personal (also #vault, #personal) … */
+function route(){
+  let [t, sub] = location.hash.slice(1).split('/');
+  if(t === 'vault' || t === 'personal'){ t = 'docs'; sub = 'personal'; }
+  if(!TABS.some(x=>x.id === t)) return false;
+  tab = t;
+  // #docs/personal and #docs/trip pick the side; plain #docs keeps the one used last
+  if(t === 'docs' && typeof docFilter !== 'undefined' && sub) docFilter.kind = sub === 'personal' ? 'personal' : 'travel';
+  return true;
+}
 function setTrip(id){ S.settings.lastTrip = id; save({quiet: true, noSync: true}); render(); }
 
 function shell(){
@@ -369,7 +379,7 @@ function shell(){
   $('trip-pick').onchange = e=>{ if(e.target.value === '__new') { e.target.value = S.settings.lastTrip || ''; VIEWS.newTrip(); } else setTrip(e.target.value); };
   $('modal').addEventListener('click', e=>{ if(e.target.id === 'modal') closeModal(); });
   document.addEventListener('keydown', e=>{ if(e.key === 'Escape'){ if(!$('modal').hidden) closeModal(); else if(!$('viewer').hidden) closeViewer(); } });   // the top one first
-  window.addEventListener('hashchange', ()=>{ const t = location.hash.slice(1).split('/')[0]; if(TABS.some(x=>x.id === t) && t !== tab){ tab = t; render(); } });
+  window.addEventListener('hashchange', ()=>{ if(route() || true) render(); });
   setSyncBadge(Cloud.syncConfig() ? 'ok' : 'off');
 }
 const logo = () => `<svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="var(--brand-bg)"/><path d="M14 40l36-14-36-14 7 14z" fill="var(--brand-fg)"/><path d="M21 26h29" stroke="var(--brand-bg)" stroke-width="3"/><circle cx="46" cy="46" r="6" fill="none" stroke="var(--brand-fg)" stroke-width="3.5"/></svg>`;
@@ -581,8 +591,7 @@ function applyTheme(t, store){
 /* ---------------------------------------------------------------- start */
 async function start(){
   shell();
-  const h = location.hash.slice(1).split('/')[0];
-  if(TABS.some(t=>t.id === h)) tab = h;
+  route();
   render();
   Cloud.loadAi().then(async ()=>{
     if(Cloud.shared) await Cloud.shared.quiet().catch(()=>null);     // settings (AI keys, sign-in) from your other device

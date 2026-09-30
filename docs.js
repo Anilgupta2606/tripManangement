@@ -6,7 +6,7 @@
 const TYPE_ICON = {'boarding-pass': '🎫', flight: '✈️', hotel: '🏨', train: '🚆', bus: '🚌', visa: '🛂', passport: '📘', insurance: '🛡️', car: '🚕', activity: '🎟️',
   aadhaar: '🪪', pan: '💳', licence: '🚗', 'voter-id': '🗳️', tax: '🧾', bank: '🏦', investment: '📈', property: '🏠', vehicle: '🚙', medical: '🩺', education: '🎓', employment: '💼', bill: '📑', other: '📄'};
 /* The category picker, in groups: Travel, Identity, Money and tax, Home health and work, Other. */
-const typeOptions = sel => Parse.GROUPS.map(g=>`<optgroup label="${esc(g.label)}">${g.types.map(k=>`<option value="${k}"${k === sel ? ' selected' : ''}>${TYPE_ICON[k] || ''} ${esc(typeLabel(k))}</option>`).join('')}</optgroup>`).join('');
+const typeOptions = (sel, which) => Parse.GROUPS.filter(which || (()=>true)).map(g=>`<optgroup label="${esc(g.label)}">${g.types.map(k=>`<option value="${k}"${k === sel ? ' selected' : ''}>${TYPE_ICON[k] || ''} ${esc(typeLabel(k))}</option>`).join('')}</optgroup>`).join('');
 const groupOf = t => (Parse.GROUPS.find(g=>g.types.indexOf(t) >= 0) || {id: 'other', label: 'Other'});
 const typeLabel = t => Parse.TYPE_LABEL[t] || 'Other';
 
@@ -164,12 +164,12 @@ function timeline(t){
 }
 
 /* ================================================================ Documents */
-const docFilter = {q: '', person: '', type: '', trip: 'current', kind: 'travel'};
+var docFilter = {q: '', person: '', type: '', trip: 'current', kind: 'travel'};
 VIEWS.docs = function(main, cur){
   keepQueueEdits();                                    // the review cards' unsaved edits, before the page is drawn again
   const kind = docFilter.kind;                         // travel | personal | all
   const tripSel = docFilter.trip === 'current' ? (cur ? cur.id : '') : docFilter.trip;
-  let list = S.docs.filter(d=>(kind === 'all' || (kind === 'travel') === Parse.isTravel(d.type) || (kind === 'travel' && d.tripId))
+  let list = S.docs.filter(d=>(kind === 'personal' ? !Parse.isTravel(d.type) : (Parse.isTravel(d.type) || d.tripId))
     && (kind === 'personal' || !tripSel || (tripSel === 'none' ? !d.tripId : d.tripId === tripSel))
     && (!docFilter.person || d.person === docFilter.person) && (!docFilter.type || d.type === docFilter.type));
   if(docFilter.q){ const q = docFilter.q.toLowerCase(); list = list.filter(d=>(d.title + ' ' + d.person + ' ' + typeLabel(d.type) + ' ' + JSON.stringify(d.fields) + ' ' + (d.fileName || '')).toLowerCase().indexOf(q) >= 0); }
@@ -179,9 +179,13 @@ VIEWS.docs = function(main, cur){
   const soon = Rules.addDays(todayISO(), 90);
   const renew = S.docs.filter(d=>d.fields && d.fields.validUntil && d.fields.validUntil <= soon).sort((a, b)=>a.fields.validUntil.localeCompare(b.fields.validUntil));
   const byGroup = kind === 'travel' ? null : Parse.GROUPS.map(g=>({g, docs: list.filter(d=>groupOf(d.type).id === g.id)})).filter(x=>x.docs.length);
-  const seg = ['travel', 'personal', 'all'].map(k=>`<button role="tab" data-kind="${k}" class="${kind === k ? 'on' : ''}" aria-selected="${kind === k}">${k === 'travel' ? '✈️ Travel' : k === 'personal' ? '🗂️ Personal' : 'All'}</button>`).join('');
+  const nTrip = S.docs.filter(d=>Parse.isTravel(d.type) || d.tripId).length, nMine = S.docs.filter(d=>!Parse.isTravel(d.type)).length;
   main.innerHTML = `
-  <section class="section-head"><h1>Documents</h1><div class="seg" role="tablist" aria-label="Which documents">${seg}</div></section>
+  <section class="section-head"><h1>${kind === 'personal' ? 'Personal documents' : 'Trip documents'}</h1></section>
+  <nav class="subtabs-bar" role="tablist" aria-label="Which documents">
+    <a role="tab" href="#docs/trip" class="${kind !== 'personal' ? 'on' : ''}" aria-selected="${kind !== 'personal'}">✈️ Trip documents <span class="n">${nTrip}</span></a>
+    <a role="tab" href="#docs/personal" class="${kind === 'personal' ? 'on' : ''}" aria-selected="${kind === 'personal'}">🗂️ Personal documents <span class="n">${nMine}</span></a>
+  </nav>
   <section class="drop" id="drop">
     <input type="file" id="file-in" accept="application/pdf,image/*,.pdf,.jpg,.jpeg,.png,.heic,.webp" multiple hidden>
     <input type="file" id="cam-in" accept="image/*" capture="environment" hidden>
@@ -197,7 +201,7 @@ VIEWS.docs = function(main, cur){
     <input type="search" id="f-q" placeholder="${kind === 'personal' ? 'Search name, number, category…' : 'Search PNR, name, hotel, flight…'}" value="${esc(docFilter.q)}">
     ${kind === 'personal' ? '' : `<select id="f-trip"><option value="current">${cur ? esc(cur.name) : 'Current trip'}</option><option value="">All trips</option><option value="none">Not in a trip</option>${S.trips.filter(t=>!cur || t.id !== cur.id).map(t=>`<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select>`}
     <select id="f-person"><option value="">Everyone</option>${people.map(p=>`<option>${esc(p)}</option>`).join('')}</select>
-    <select id="f-type"><option value="">All categories</option>${typeOptions(docFilter.type)}</select>
+    <select id="f-type"><option value="">All categories</option>${typeOptions(docFilter.type, kind === 'personal' ? g=>g.id !== 'travel' : g=>g.id === 'travel' || g.id === 'identity')}</select>
   </section>
   ${byGroup ? (byGroup.map(x=>`<section class="doc-group"><h2>${esc(x.g.label)} <span class="muted small">${x.docs.length}</span></h2><div class="doc-grid">${x.docs.map(docCard).join('')}</div></section>`).join('') || '<p class="muted empty">No documents here yet.</p>')
     : `<section class="doc-grid">${list.map(docCard).join('') || '<p class="muted empty">No documents here yet.</p>'}</section>`}`;
@@ -206,7 +210,6 @@ VIEWS.docs = function(main, cur){
   const refilter = ()=>{ docFilter.q = $('f-q').value; if($('f-trip')) docFilter.trip = $('f-trip').value; docFilter.person = $('f-person').value; docFilter.type = $('f-type').value; const pos = $('f-q').selectionStart; VIEWS.docs(main, cur); if(document.activeElement !== $('f-q') && docFilter.q){ $('f-q').focus(); $('f-q').setSelectionRange(pos, pos); } };
   $('f-q').oninput = ()=>{ clearTimeout(refilter.t); refilter.t = setTimeout(refilter, 250); };
   ['f-trip', 'f-person', 'f-type'].forEach(id=>{ if($(id)) $(id).onchange = refilter; });
-  main.querySelectorAll('[data-kind]').forEach(b=>b.onclick = ()=>{ docFilter.kind = b.dataset.kind; docFilter.type = ''; VIEWS.docs(main, cur); });
   $('pick').onclick = ()=>$('file-in').click();
   $('cam').onclick = ()=>$('cam-in').click();
   $('file-in').onchange = e=>{ addFiles(Array.from(e.target.files)); e.target.value = ''; };

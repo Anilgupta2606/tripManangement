@@ -492,3 +492,11 @@ fieldset.types p{ flex-basis: 100%; margin: 0; }
 .field-note{ font-size: 12.5px; font-weight: 500; color: var(--muted); }
 .plan-more{ display: inline-flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 .danger-link{ color: var(--bad) !important; }
+
+/* ---------- documents: trip / personal sub-tabs */
+.subtabs-bar{ display: flex; gap: 6px; border-bottom: 1px solid var(--border); margin-top: -6px; overflow-x: auto; }
+.subtabs-bar a{ display: inline-flex; align-items: center; gap: 8px; padding: 10px 14px; text-decoration: none; color: var(--ink-2); font-weight: 600; border-bottom: 3px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.subtabs-bar a.on{ color: var(--accent); border-bottom-color: var(--accent); }
+.subtabs-bar a:hover{ color: var(--ink); }
+.subtabs-bar .n{ font-size: 12px; font-weight: 700; background: var(--surface-2); color: var(--muted); border-radius: 999px; padding: 1px 8px; }
+.subtabs-bar a.on .n{ background: var(--accent-soft); color: var(--accent); }
