@@ -481,5 +481,11 @@ const Cloud = (function(){
      'aiAvailable', 'aiNames', 'canSee', 'canSearch', 'resting', 'wake', 'chat', 'json'].forEach(k=>{ api[k] = MoneyAI[k]; });
     api.central = true;
   }
+  /* One sign-in for every app (Money Home → Setup): the Expense Tracker's, or the one your other device carried over. */
+  if(typeof MoneyShared !== 'undefined'){
+    api.checkLogin = MoneyShared.checkLogin;
+    api.loginSource = async ()=>{ const s = await MoneyShared.loginSource(); return s === 'carried' ? 'expense-tracker' : s === 'default' ? 'own' : s; };
+    api.shared = MoneyShared;
+  }
   return api;
 })();

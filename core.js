@@ -420,6 +420,7 @@ function openSettings(section){
       <label>AirLabs key <a class="small" href="https://airlabs.co/signup" target="_blank" rel="noopener">get one</a><input id="k-al" type="password" autocomplete="off" value="${esc(fk.airlabs || '')}"></label>
     </details>
     <details ${section === 'sync' ? 'open' : ''}><summary>${icon('sync')} Phone ↔ laptop sync</summary>
+      ${Cloud.shared ? `<p class="notice-line">Tip: <a href="/setup/">Money Home → Setup</a> sets up sync, the sign-in and the AI keys for <b>all</b> your apps at once.</p>` : ''}
       <p class="muted">Your trips and documents are encrypted on this device with a passphrase, then kept in private GitHub Gists. Use the same token and passphrase on the phone and they see the same vault. GitHub only ever holds unreadable data.</p>
       ${sync ? `<p>Sync is <b>on</b>${sync.syncedAt ? ' · last synced ' + esc(ago(sync.syncedAt)) : ''}${sync.lastError ? `<br><span class="err">${esc(sync.lastError)}</span>` : ''}</p>
         <label class="check"><input type="checkbox" id="share-keys" ${S.settings.shareKeys === false ? '' : 'checked'}> Carry my AI and flight keys to my other devices (inside the encrypted sync)</label>
@@ -520,7 +521,10 @@ async function start(){
   const h = location.hash.slice(1).split('/')[0];
   if(TABS.some(t=>t.id === h)) tab = h;
   render();
-  Cloud.loadAi().then(()=>{ render(); autoSync(); });      // the other apps' keys are known before the first sync
+  Cloud.loadAi().then(async ()=>{
+    if(Cloud.shared) await Cloud.shared.quiet().catch(()=>null);     // settings (AI keys, sign-in) from your other device
+    render(); autoSync();
+  });
   document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'visible') autoSync(); });
 }
 window.addEventListener('DOMContentLoaded', async function boot(){
