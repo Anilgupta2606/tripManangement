@@ -563,7 +563,8 @@ const Knowledge = (function(){
     while((m = re.exec(text)) && out.length < max){
       const f = fields(m[2]);
       if(!f.name) continue;
-      out.push({kind: m[1].toLowerCase(), name: f.name, hours: f.hours || '', price: f.price || '', note: (f.content || '').slice(0, 160), area: area || ''});
+      const lat = parseFloat(f.lat), lng = parseFloat(f.long || f.lon || f.lng);
+      out.push({kind: m[1].toLowerCase(), name: f.name, hours: f.hours || '', price: f.price || '', note: (f.content || '').slice(0, 160), area: area || '', lat: isFinite(lat) ? lat : null, lng: isFinite(lng) ? lng : null});
     }
     return out;
   }
@@ -581,7 +582,7 @@ const Knowledge = (function(){
       const here = String(near || '').toLowerCase();
       subs.sort((a, b)=>(here.indexOf(b.split('/').pop().toLowerCase()) >= 0) - (here.indexOf(a.split('/').pop().toLowerCase()) >= 0));
       const pages = await Promise.all(subs.slice(0, 4).map(t=>wikivoyage(t).catch(()=>null)));
-      pages.forEach(p=>{ if(p) listings = listings.concat(listingsOf(p.text, p.title.split('/').pop(), 30)); });
+      pages.forEach(p=>{ if(p) listings = listings.concat(listingsOf(p.text, p.title.split('/').pop(), 45)); });
     }
     const advice = {};
     ['See', 'Do', 'Eat', 'Get around', 'Stay safe', 'Respect', 'Cope'].forEach(h=>{
@@ -598,9 +599,24 @@ const Knowledge = (function(){
     const d = await res.json();
     const skip = /school|college|university|institute|hospital|clinic|constituency|assembly|court|office|ministry|bank|company|station\b|metro\)|\bline\b|depot|district|taluka|ward|panchayat|stadium|ground$|cricket|election|police|embassy|consulate|centre for|center for|research|headquarters|interchange|junction|road$|street$|highway|flyover|bridge$|tower \d/i;
     // "Al Karama, United Arab Emirates": a neighbourhood's article, not a place to visit
-    return cache[k] = ((d.query || {}).geosearch || []).filter(g=>!skip.test(g.title) && g.title.indexOf(', ') < 0).map(g=>({name: g.title, km: Math.round(g.dist / 100) / 10}));
+    return cache[k] = ((d.query || {}).geosearch || []).filter(g=>!skip.test(g.title) && g.title.indexOf(', ') < 0).map(g=>({name: g.title, km: Math.round(g.dist / 100) / 10, lat: g.lat, lng: g.lon}));
   }
-  /* Everything for a stay: -> {loc, hotelLoc, guide, nearby, used:[what was found]} */
+  /* How well known each place is: its Wikipedia page's readers in the last 30 days (free, no key). -> {lower-case name: views} */
+  async function fame(names){
+    const out = {}, list = Array.from(new Set(names.filter(Boolean))).slice(0, 200);
+    for(let i = 0; i < list.length; i += 50){
+      const part = list.slice(i, i + 50);
+      const k = 'f:' + part.join('|');
+      try{
+        const d = cache[k] || (cache[k] = await (await fetch('https://en.wikipedia.org/w/api.php?action=query&prop=pageviews&pvipdays=30&redirects=1&format=json&origin=*&titles=' + encodeURIComponent(part.join('|')))).json());
+        const q = d.query || {}, back = {};
+        (q.normalized || []).concat(q.redirects || []).forEach(r=>{ back[r.to] = (back[r.from] || r.from); });
+        Object.values(q.pages || {}).forEach(p=>{ if(p.missing !== undefined) return; const v = Object.values(p.pageviews || {}).reduce((s, x)=>s + (x || 0), 0); out[String(back[p.title] || p.title).toLowerCase()] = v; });
+      }catch(e){}
+    }
+    return out;
+  }
+  /* Everything for a stay: -> {loc, hotelLoc, guide, nearby, fame, used:[what was found]} */
   async function gather(city, country, hotel){
     const used = [];
     let hotelLoc = null;
@@ -618,7 +634,9 @@ const Knowledge = (function(){
     }
     if(g && (g.listings.length || Object.keys(g.advice).length)) used.push('travel guide (' + (g.listings.length ? g.listings.length + ' places' : 'advice') + ')');
     if(n.length) used.push(n.length + ' places near ' + (hotelLoc ? 'the hotel' : 'the centre'));
-    return {loc, hotelLoc, guide: g, nearby: n, used};
+    const fm = await fame(((g && g.listings) || []).filter(l=>l.kind !== 'eat' && l.kind !== 'drink').map(l=>l.name).concat(n.map(p=>p.name))).catch(()=>({}));
+    if(Object.keys(fm).length) used.push('how well known each place is (Wikipedia readers)');
+    return {loc, hotelLoc, guide: g, nearby: n, fame: fm, used};
   }
   /* The facts, short enough for any model's prompt. */
   function forPrompt(k){
@@ -629,5 +647,5 @@ const Knowledge = (function(){
     if(k.nearby.length) out.push('Notable places near ' + (k.hotelLoc ? 'the hotel' : 'the city centre') + ' (km): ' + k.nearby.slice(0, 35).map(p=>p.name + ' ' + p.km).join(', '));
     return out.join('\n\n').slice(0, 9000);
   }
-  return {guide, nearby, gather, forPrompt};
+  return {guide, nearby, gather, forPrompt, fame};
 })();

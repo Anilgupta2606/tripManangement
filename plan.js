@@ -59,12 +59,15 @@ VIEWS.plan = function(main, cur){
     </div>
     <div class="weather-strip" id="p-weather"></div>
     <div class="row">
-      <button class="btn primary big" id="p-ai" ${Cloud.aiAvailable() ? '' : 'disabled title="Add a free AI key in Setup"'}>${icon('spark')} ${plan ? 'Re-plan with AI' : 'Plan with AI'}</button>
-      <span class="muted small plan-how">${!Cloud.aiAvailable() ? 'AI planning needs a free key — <a href="#" id="p-key">add one</a>.'
+      ${BRAIN ? `<button class="btn primary big" id="p-brain">${icon('spark')} ${plan ? 'Re-plan my days' : 'Plan my days'}</button>` : ''}
+      <button class="btn ${BRAIN ? 'soft' : 'primary big'}" id="p-ai" ${Cloud.aiAvailable() ? '' : 'disabled title="Add a free AI key in Setup"'}>${BRAIN ? '' : icon('spark') + ' '}${plan ? 'Re-plan with AI' : 'Plan with AI'}</button>
+      <span class="muted small plan-how">${BRAIN
+        ? 'Plan my days: Trip Vault’s own planner, in seconds and without AI. It reads the city guide (places, opening hours, map positions), the weather and what it has learned about you, then picks the best places for each day, close together and open when you get there, and says why. Items you locked 🔒 stay; Undo brings back the old plan.'
+        : !Cloud.aiAvailable() ? 'AI planning needs a free key — <a href="#" id="p-key">add one</a>.'
         : plan ? 'Writes a fresh plan for every day from the city guide, places near your hotel, weather and news. Items you locked 🔒 stay; Undo brings back the old plan.'
         : 'Writes a full plan for every day — sights, meals and timings — from the city guide, places near your hotel, weather and news, to your rules.'}</span>
       <span class="plan-more">
-        <button class="linkish small" id="p-skel" title="No AI: only flights, transfers, check-in/out and meal slots, with open blocks for you to fill">${plan ? 'Start again without AI' : 'Or lay out the days without AI'}</button>
+        <button class="linkish small" id="p-skel" title="No AI: only flights, transfers, check-in/out and meal slots, with open blocks for you to fill">${plan ? 'Only the fixed parts' : 'Only lay out the fixed parts'}</button>
         ${plan ? `<button class="linkish small danger-link" id="p-del">Delete this plan</button>` : ''}
       </span>
       <span class="muted small" id="p-status"></span>
@@ -80,10 +83,10 @@ VIEWS.plan = function(main, cur){
   </section>
   <section class="days" id="days">${plan.days.map((d, di)=>dayCard(d, di, problems, ctx)).join('')}</section>
   <section class="card issues">
-    <h2>${icon('spark')} Not happy with it? Tell the AI</h2>
+    <h2>${icon('spark')} Not happy with it? Say what to change</h2>
     <p class="muted small">For example: “Day 2 is too packed”, “I have a meeting on the 14th at 3 pm”, “add a beach day”, “we are vegetarian”, “no temples, more food places”. Items you lock ${icon('lock')} are kept as they are.</p>
     <textarea id="p-issue" rows="3" placeholder="What should change?"></textarea>
-    <div class="row"><button class="btn primary" id="p-send" ${Cloud.aiAvailable() ? '' : 'disabled'}>Update the plan</button><span class="muted small">${plan.by ? 'Last planned by ' + esc(plan.by) : ''}</span></div>
+    <div class="row"><button class="btn primary" id="p-send" ${Cloud.aiAvailable() || BRAIN ? '' : 'disabled'}>Update the plan</button><span class="muted small">${plan.by ? 'Last planned by ' + esc(plan.by) : ''}</span></div>
     ${(plan.used || []).length ? `<p class="muted small">Planned with: ${esc(plan.used.join(' · '))}.</p>` : ''}
     ${(plan.sources || []).length ? `<details><summary class="small">Sources the AI used (${plan.sources.length})</summary><ul class="history small">${plan.sources.map(x=>`<li><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a></li>`).join('')}</ul></details>` : ''}
     ${(plan.history || []).length ? `<details><summary class="small">What was asked before (${plan.history.length})</summary><ul class="history small">${plan.history.slice().reverse().map(h=>`<li><span class="muted">${esc(ago(h.at))}</span> ${esc(h.text)}</li>`).join('')}</ul></details>` : ''}
@@ -110,6 +113,7 @@ VIEWS.plan = function(main, cur){
     storePlan(cur, c, sk.days, 'Built-in layout', 'Laid out the fixed parts');
   };
   $('p-ai').onclick = ()=>{ const c = readSetup(ctx); if(c) aiPlan(cur, c, '', $('p-ai')); };
+  if($('p-brain')) $('p-brain').onclick = ()=>{ const c = readSetup(ctx); if(c) brainPlan(cur, c); };
   if($('p-del')) $('p-del').onclick = async ()=>{
     if(!(await confirmBox('Delete this plan?', 'Every day of the ' + planState.city + ' plan goes, with what was asked of the AI. You can plan it again from scratch.', 'Delete'))) return;
     delete S.plans[key]; S.deleted[key] = Date.now();
@@ -118,7 +122,7 @@ VIEWS.plan = function(main, cur){
   if(!plan) { loadWeather(cur, ctx); return; }
   loadWeather(cur, ctx);
   if($('p-fix')) $('p-fix').onclick = ()=>{ const c = readSetup(ctx); if(c) fixPlan(cur, c); };
-  $('p-send').onclick = ()=>{ const t = $('p-issue').value.trim(); if(!t) return $('p-issue').focus(); const c = readSetup(ctx); if(c) aiPlan(cur, c, t, $('p-send')); };
+  $('p-send').onclick = ()=>{ const t = $('p-issue').value.trim(); if(!t) return $('p-issue').focus(); const c = readSetup(ctx); if(c) askChange(cur, c, t); };
   $('p-undo').onclick = ()=>{ const v = plan.versions.pop(); if(v){ plan.days = v.days; touch(plan); save(); render(); toast('Undone.'); } };
   $('p-copy').onclick = ()=>{ navigator.clipboard.writeText(planText(plan, ctx)).then(()=>toast('Copied — paste it anywhere.')); };
   main.querySelectorAll('[data-goto]').forEach(li=>li.onclick = ()=>{ const el = document.querySelector(`[data-day="${li.dataset.goto}"]`); if(el) el.scrollIntoView({behavior: 'smooth', block: 'start'}); });
@@ -368,6 +372,51 @@ async function aiPlan(trip, c, issue, clicked){
   }finally{ planState.busy = false; planState.ctl = null; }
 }
 
+/* ---------------------------------------------------------------- Trip Vault's own planner (think.js on /ai/brain.js) */
+const BRAIN = typeof MoneyBrain !== 'undefined' && typeof TripBrain !== 'undefined';
+async function brainPlan(trip, c, what){
+  if(planState.busy) return;
+  const key = planKey(trip.id, c.city), prev = S.plans[key];
+  planState.busy = true;
+  Busy.start(prev ? 'Re-planning your days' : 'Planning your days', null);
+  try{
+    Busy.step('Reading about ' + c.city + ' on the internet (places, opening hours, map positions)…');
+    const know = await Knowledge.gather(c.city, c.country, c.hotel).catch(()=>null);
+    if(!know || !know.guide || !know.guide.listings.length) Busy.step('The travel guide has little on ' + c.city + ' — using places near the hotel');
+    Busy.step('Choosing the best places for each day…');
+    await new Promise(r=>setTimeout(r, 30));
+    const res = TripBrain.plan(c, know, LOCAL_WEATHER[key] || c.weather || {}, prev);
+    storePlan(trip, c, res.days, 'Trip Vault planner (no AI)', what || ((prev ? 'Re-planned' : 'Planned') + ': ' + res.summary),
+      {sources: know && know.guide ? [{title: 'Wikivoyage: ' + know.guide.title, url: know.guide.url}] : [], used: res.used, fixes: res.fixes});
+    const left = Rules.check({days: res.days}, c.rules, Object.assign({}, c, {weather: LOCAL_WEATHER[key]})).filter(p=>p.level === 'error').length;
+    Busy.done((prev ? 'Re-planned' : 'Planned') + ' in seconds, without AI — ' + res.summary + (left ? ' · ' + left + ' rule break' + (left === 1 ? '' : 's') + ' left' : ' · follows every rule'));
+  }catch(e){ Busy.done('Could not plan: ' + e.message, true); }
+  finally{ planState.busy = false; }
+}
+/* "Not happy with it?": understood here when it can be (pace, food, kinds of places, times, a meeting, a free evening),
+   else the AI is asked. What it understood is also learned for next time. */
+async function askChange(trip, c, text){
+  const key = planKey(trip.id, c.city), plan = S.plans[key];
+  if(BRAIN){
+    const r = TripBrain.apply(text, c, plan ? plan.days : []);
+    if(r.understood){
+      const keep = S.settings.rules || {};
+      S.settings.rules = Object.assign({}, keep, r.rules);
+      c = Object.assign({}, c, {rules: Object.assign({}, r.rules, {custom: (c.rules || {}).custom})});
+      if(plan){
+        r.fixed.forEach(f=>{ const d = plan.days.find(x=>x.date === f.date); if(d) d.items.push(f.item); });
+        r.free.forEach(f=>{ (f.date ? plan.days.filter(x=>x.date === f.date) : plan.days).forEach(d=>d.items.push(TripBrain.freeBlock(f.part))); });
+      }
+      save({quiet: true});
+      toast('Understood: ' + r.said.join(' · '));
+      if($('p-issue')) $('p-issue').value = '';
+      return brainPlan(trip, c, text);
+    }
+    if(!Cloud.aiAvailable()) return toast('Not understood without AI. Try: “day 2 is too packed”, “we are vegetarian”, “no temples”, “more museums”, “meeting on the 24th at 3 pm”, “keep the evening free on day 3”.', 'error');
+  }
+  return aiPlan(trip, c, text, $('p-send'));
+}
+
 /* ---------------------------------------------------------------- days and items */
 const KIND_LABEL = {sight: 'Sight', activity: 'Activity', meal: 'Meal', shopping: 'Shopping', rest: 'Rest', transit: 'Travel', flight: 'Flight', hotel: 'Hotel', free: 'Open'};
 function dayCard(d, di, problems, ctx){
@@ -395,8 +444,9 @@ function bindDays(main, plan, ctx){
   const at = s => s.split(':').map(Number);
   const commit = what => { plan.versions = (plan.versions || []).concat([{at: Date.now(), days: JSON.parse(JSON.stringify(plan._before))}]).slice(-15); delete plan._before; touch(plan); save(); render(); if(what) toast(what); };
   const before = () => { plan._before = JSON.parse(JSON.stringify(plan.days)); };
-  main.querySelectorAll('[data-lock]').forEach(b=>b.onclick = ()=>{ const [d, i] = at(b.dataset.lock); before(); plan.days[d].items[i].locked = !plan.days[d].items[i].locked; commit(); });
-  main.querySelectorAll('[data-del]').forEach(b=>b.onclick = ()=>{ const [d, i] = at(b.dataset.del); before(); plan.days[d].items.splice(i, 1); commit('Removed — Undo brings it back.'); });
+  const learn = (what, it) => { try{ if(BRAIN) TripBrain.learnFromEdit(what, it); }catch(e){} };
+  main.querySelectorAll('[data-lock]').forEach(b=>b.onclick = ()=>{ const [d, i] = at(b.dataset.lock); before(); const it = plan.days[d].items[i]; it.locked = !it.locked; if(it.locked) learn('lock', it); commit(); });
+  main.querySelectorAll('[data-del]').forEach(b=>b.onclick = ()=>{ const [d, i] = at(b.dataset.del); before(); learn('remove', plan.days[d].items[i]); plan.days[d].items.splice(i, 1); commit('Removed — Undo brings it back.'); });
   // moving swaps the time slots, so the order and the times stay consistent
   const swap = (d, i, j) => {                       // i < j, next to each other
     const items = plan.days[d].items, A = items[i], B = items[j], m = Rules.toMin;
@@ -432,6 +482,7 @@ function editItem(plan, di, ii, ctx){
     const before = JSON.parse(JSON.stringify(plan.days));
     const n = Object.assign({}, it, {id: it.id || uid('i'), title: $('i-title').value.trim(), start: $('i-start').value, end: $('i-end').value, place: $('i-place').value.trim(),
       kind: $('i-kind').value, notes: $('i-notes').value.trim(), outdoor: $('i-out').checked, locked: $('i-lock').checked});
+    try{ if(BRAIN){ if(ii < 0) TripBrain.learnFromEdit('add', n); else if(n.start !== it.start) TripBrain.learnFromEdit('time', n); } }catch(err){}
     if(ii >= 0) plan.days[di].items.splice(ii, 1);
     const to = plan.days[+$('i-day').value];
     to.items.push(n);
