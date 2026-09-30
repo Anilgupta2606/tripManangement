@@ -121,13 +121,20 @@ VIEWS.trips = function(main, cur){
     });
   };
   main.querySelectorAll('[data-open-doc]').forEach(b=>b.onclick = ()=>openViewer(b.dataset.openDoc));
+  bindOpenDocs(main);
 };
+/* A button for several documents (everyone's tickets for one flight): the viewer steps through them. */
+function bindOpenDocs(root){
+  root.querySelectorAll('[data-open-docs]').forEach(b=>b.onclick = ()=>{ const ids = b.dataset.openDocs.split(',').filter(Boolean); openViewer(ids[0], ids); });
+}
 
 /* Everything booked for a trip, day by day. */
 function timeline(t){
   const ev = [];
   flightsOf(t.id).forEach(f=>ev.push({date: f.date, time: f.dep || '', icon: '✈️', title: `${f.flight} ${f.from || '?'} → ${f.to || '?'}`,
-    sub: [f.dep && f.arr ? f.dep + '–' + f.arr : f.dep, f.airline, f.seat ? 'seat ' + f.seat : '', f.person].filter(Boolean).join(' · '), doc: f.boardingPass || f.docs[0]}));
+    sub: [f.dep && f.arr ? f.dep + '–' + f.arr : f.dep, f.airline].filter(Boolean).join(' · '),
+    people: f.travellers.length ? (f.travellers.length > 1 ? f.travellers.length + ' travellers: ' : '') + travellersText(f) : '',
+    docs: f.allDocs}));
   hotelsOf(t.id).forEach(h=>{
     if(h.checkIn) ev.push({date: h.checkIn, time: h.checkInTime || '14:00', icon: '🏨', title: 'Check in · ' + h.name, sub: [h.address, h.confirmation ? 'conf. ' + h.confirmation : ''].filter(Boolean).join(' · '), doc: h.doc});
     if(h.checkOut) ev.push({date: h.checkOut, time: h.checkOutTime || '11:00', icon: '🧳', title: 'Check out · ' + h.name, sub: '', doc: h.doc});
@@ -141,7 +148,8 @@ function timeline(t){
   return '<ol class="timeline">' + ev.map(e=>{
     const head = e.date !== last ? `<li class="tl-day">${esc(e.date ? fmtDate(e.date, true) : 'Date unknown')}</li>` : '';
     last = e.date;
-    return head + `<li class="tl-ev"><span class="tl-time">${esc(e.time)}</span><span class="tl-ic">${e.icon}</span><div><b>${esc(e.title)}</b>${e.sub ? `<div class="muted small">${esc(e.sub)}</div>` : ''}</div>${e.doc ? `<button class="btn ghost small" data-open-doc="${esc(e.doc)}">View</button>` : ''}</li>`;
+    const docs = e.docs || (e.doc ? [e.doc] : []);
+    return head + `<li class="tl-ev"><span class="tl-time">${esc(e.time)}</span><span class="tl-ic">${e.icon}</span><div><b>${esc(e.title)}</b>${e.sub ? `<div class="muted small">${esc(e.sub)}</div>` : ''}${e.people ? `<div class="tl-people small">${icon('user')} ${esc(e.people)}</div>` : ''}</div>${docs.length ? `<button class="btn ghost small" data-open-docs="${esc(docs.join(','))}">${docs.length > 1 ? 'View all ' + docs.length : 'View'}</button>` : ''}</li>`;
   }).join('') + '</ol>';
 }
 
@@ -403,15 +411,19 @@ function bindReview(el, q){
 
 /* ================================================================ viewer (works on the phone) */
 let viewerUrl = null;
-async function openViewer(id){
+let viewSet = [];
+async function openViewer(id, set){
   const d = S.docs.find(x=>x.id === id);
   if(!d) return;
+  viewSet = (set || [id]).filter(x=>S.docs.some(y=>y.id === x));
+  const at = viewSet.indexOf(id), many = viewSet.length > 1;
   const v = $('viewer');
   v.hidden = false; document.body.classList.add('noscroll');
   const trip = tripById(d.tripId);
   v.innerHTML = `<div class="viewer-bar">
       <button class="icon-btn" id="v-x" aria-label="Close">${icon('x')}</button>
-      <div class="viewer-title"><b>${esc(d.title)}</b><span class="muted small">${TYPE_ICON[d.type] || ''} ${esc(typeLabel(d.type))} · ${esc(d.person || 'whose?')}${trip ? ' · ' + esc(trip.name) : ''}</span></div>
+      <div class="viewer-title"><b>${many ? esc(d.person || 'whose?') + ' — ' : ''}${esc(d.title)}</b><span class="muted small">${many ? (at + 1) + ' of ' + viewSet.length + ' · ' : ''}${TYPE_ICON[d.type] || ''} ${esc(typeLabel(d.type))} · ${esc(d.person || 'whose?')}${trip ? ' · ' + esc(trip.name) : ''}</span></div>
+      ${many ? `<button class="btn soft small" id="v-prev" ${at === 0 ? 'disabled' : ''} aria-label="Previous ticket">‹ Prev</button><button class="btn soft small" id="v-next" ${at === viewSet.length - 1 ? 'disabled' : ''} aria-label="Next ticket">Next ›</button>` : ''}
       <button class="btn soft small" id="v-bright" title="Full brightness view for scanning at the gate">Scan mode</button>
       <button class="btn soft small" id="v-edit">${icon('edit')}<span class="hide-sm"> Details</span></button>
       <button class="btn soft small" id="v-dl">${icon('download')}<span class="hide-sm"> Open</span></button>
@@ -420,6 +432,12 @@ async function openViewer(id){
     <div class="viewer-body" id="v-body"><div class="center"><span class="spinner"></span> Opening…</div></div>
     <aside class="viewer-facts" id="v-facts">${factsPanel(d)}</aside>`;
   $('v-x').onclick = closeViewer;
+  if(many){
+    const go = k => { const n = viewSet[at + k]; if(n) openViewer(n, viewSet); };
+    $('v-prev').onclick = ()=>go(-1); $('v-next').onclick = ()=>go(1);
+    v.onkeydown = e=>{ if(e.key === 'ArrowLeft') go(-1); if(e.key === 'ArrowRight') go(1); };
+    v.tabIndex = -1; v.focus();
+  } else v.onkeydown = null;
   $('v-bright').onclick = ()=>v.classList.toggle('bright');
   $('v-edit').onclick = ()=>editDoc(d);
   $('v-del').onclick = async ()=>{

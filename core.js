@@ -235,19 +235,43 @@ const isInternational = f => { const a = Parse.airport(f.from), b = Parse.airpor
 /* ---------------------------------------------------------------- what the documents say, per trip */
 const tripById = id => S.trips.find(t=>t.id === id);
 const docsOf = tripId => S.docs.filter(d=>!tripId || d.tripId === tripId);
+/* Every flight in a trip, once each: the tickets and boarding passes of everyone on it are gathered together,
+   with each traveller (the document's owner and every passenger named on it) and their seat when known. */
+const nameKey = n => String(n || '').toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ');
 function flightsOf(tripId){
   const out = [];
+  const addPerson = (f, name, seat) => {
+    name = Parse.titleCase(String(name || '').trim());
+    if(!name) return;
+    let p = f.travellers.find(x=>nameKey(x.name) === nameKey(name));
+    if(!p){ p = {name, seat: ''}; f.travellers.push(p); }
+    if(seat && !p.seat) p.seat = seat;
+  };
   docsOf(tripId).forEach(d=>(d.fields && d.fields.segments || []).forEach(s=>{
     if(!s.flight) return;
     const k = s.flight + '|' + s.date;
-    const have = out.find(x=>x.key === k);
-    if(have){ Object.keys(s).forEach(f=>{ if(s[f] && !have[f]) have[f] = s[f]; }); if(d.type === 'boarding-pass') have.boardingPass = d.id; have.docs.push(d.id); return; }
-    out.push(Object.assign({key: k, docs: [d.id], person: d.person, boardingPass: d.type === 'boarding-pass' ? d.id : ''}, s));
+    let f = out.find(x=>x.key === k);
+    if(f){ Object.keys(s).forEach(x=>{ if(s[x] && !f[x] && x !== 'seat') f[x] = s[x]; }); }
+    else { f = Object.assign({key: k, docs: [], passes: [], travellers: []}, s); delete f.seat; out.push(f); }
+    if(f.docs.indexOf(d.id) < 0) f.docs.push(d.id);
+    if(d.type === 'boarding-pass' && f.passes.indexOf(d.id) < 0) f.passes.push(d.id);
+    // a boarding pass is one person's: its seat is theirs; a ticket may name several passengers
+    const names = (d.fields.passengers || []).length ? d.fields.passengers : [d.person];
+    names.forEach(n=>addPerson(f, n, d.type === 'boarding-pass' && names.length === 1 ? s.seat : ''));
+    if(d.person && d.type !== 'boarding-pass' && !(d.fields.passengers || []).length) addPerson(f, d.person, '');
   }));
-  S.flightsExtra.filter(f=>!tripId || f.tripId === tripId).forEach(f=>{ if(!out.some(x=>x.key === f.flight + '|' + f.date)) out.push(Object.assign({key: f.flight + '|' + f.date, docs: [], manual: f.id}, f)); });
-  out.forEach(f=>{ f.international = isInternational(f); });
+  S.flightsExtra.filter(f=>!tripId || f.tripId === tripId).forEach(f=>{ if(!out.some(x=>x.key === f.flight + '|' + f.date)) out.push(Object.assign({key: f.flight + '|' + f.date, docs: [], passes: [], travellers: f.person ? [{name: f.person, seat: ''}] : [], manual: f.id}, f)); });
+  out.forEach(f=>{
+    f.international = isInternational(f);
+    f.person = f.travellers.map(p=>p.name).join(', ');           // everyone on it
+    f.seat = f.travellers.map(p=>p.seat).filter(Boolean).join(', ');
+    f.boardingPass = f.passes[0] || '';
+    f.allDocs = f.passes.concat(f.docs.filter(id=>f.passes.indexOf(id) < 0));   // boarding passes first, then the tickets
+  });
   return out.sort((a, b)=>(a.date + (a.dep || '')).localeCompare(b.date + (b.dep || '')));
 }
+/* "Anil Gupta (23A), Priya Gupta (23B), Aarav Gupta" */
+const travellersText = f => (f.travellers || []).map(p=>p.name + (p.seat ? ' (' + p.seat + ')' : '')).join(', ');
 function hotelsOf(tripId){
   return docsOf(tripId).filter(d=>d.type === 'hotel').map(d=>({doc: d.id, name: d.fields.hotelName || d.title, address: d.fields.address || '', city: d.fields.city || '', country: d.fields.country || '',
     checkIn: d.fields.checkIn, checkOut: d.fields.checkOut, checkInTime: d.fields.checkInTime, checkOutTime: d.fields.checkOutTime, confirmation: d.fields.confirmation, phone: d.fields.phone}))

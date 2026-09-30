@@ -108,6 +108,7 @@ VIEWS.flights = function(main, cur){
   $('fl-all').onclick = async ()=>{ for(const f of upcoming) await checkFlight(f); };
   main.querySelectorAll('[data-check]').forEach(b=>b.onclick = ()=>checkFlight(all.find(f=>f.key === b.dataset.check)));
   main.querySelectorAll('[data-open-doc]').forEach(b=>b.onclick = ()=>openViewer(b.dataset.openDoc));
+  bindOpenDocs(main);
   main.querySelectorAll('[data-del-flight]').forEach(b=>b.onclick = ()=>{ remove('flightsExtra', b.dataset.delFlight); save(); render(); });
   // auto-check: flights soon, not checked in the last 10 minutes
   clearInterval(flightTimer);
@@ -137,12 +138,13 @@ function flightCard(f){
       <div class="fl-mid">${icon('plane')}<div class="small muted">${esc(fmtDate(f.date, true))}${when ? ' · ' + esc(when) : ''}</div></div>
       <div class="right"><div class="iata">${esc(f.to || '???')}</div><div class="muted small">${esc(to ? to.city : '')}</div><div>${t(arr.scheduled || f.arr, arr.estimated, arr.actual)}</div>${arr.belt ? `<div class="small">Belt ${esc(arr.belt)}</div>` : ''}</div>
     </div>
+    ${(f.travellers || []).length ? `<p class="small fl-people">${icon('user')} ${f.travellers.length > 1 ? f.travellers.length + ' travellers: ' : ''}${esc(travellersText(f))}</p>` : ''}
     ${st && st.note ? `<p class="small">${esc(st.note)}</p>` : ''}
     ${st && st.error ? `<p class="small err">${esc(st.error)}</p>` : ''}
     <div class="fl-foot small">
-      <span class="muted">${st ? esc(st.source || '') + ' · ' + esc(ago(st.at)) + (st.approximate ? ' · from web search, confirm with the airline' : '') : ''}${f.person ? ' · ' + esc(f.person) : ''}${f.seat ? ' · seat ' + esc(f.seat) : ''}</span>
+      <span class="muted">${st ? esc(st.source || '') + ' · ' + esc(ago(st.at)) + (st.approximate ? ' · from web search, confirm with the airline' : '') : ''}</span>
       <span class="grow"></span>
-      ${f.boardingPass ? `<button class="btn soft small" data-open-doc="${esc(f.boardingPass)}">🎫 Boarding pass</button>` : f.docs[0] ? `<button class="btn ghost small" data-open-doc="${esc(f.docs[0])}">Ticket</button>` : ''}
+      ${f.passes.length ? `<button class="btn soft small" data-open-docs="${esc(f.allDocs.join(','))}">🎫 ${f.passes.length > 1 ? f.passes.length + ' boarding passes' : 'Boarding pass'}</button>` : f.docs.length ? `<button class="btn ghost small" data-open-docs="${esc(f.allDocs.join(','))}">${f.docs.length > 1 ? f.docs.length + ' tickets' : 'Ticket'}</button>` : ''}
       <a class="btn ghost small" href="${L.flightaware}" target="_blank" rel="noopener">FlightAware</a><a class="btn ghost small" href="${L.fr24}" target="_blank" rel="noopener">Flightradar24</a>
       ${f.manual ? `<button class="icon-btn small" data-del-flight="${esc(f.manual)}" aria-label="Remove">${icon('trash')}</button>` : ''}
       <button class="btn soft small" data-check="${esc(f.key)}">${icon('refresh')} Check</button>

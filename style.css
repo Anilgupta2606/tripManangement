@@ -231,6 +231,8 @@ main:focus{ outline: none; }
 .tl-ev{ display: grid; grid-template-columns: 48px 30px 1fr auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px dashed var(--border); }
 .tl-time{ font: 600 13px var(--f-mono); color: var(--ink-2); }
 .tl-ic{ font-size: 18px; }
+.tl-people, .fl-people{ color: var(--ink-2); display: flex; gap: 5px; align-items: flex-start; margin: 2px 0 0; }
+.tl-people .ic, .fl-people .ic{ width: 14px; height: 14px; margin-top: 2px; }
 
 /* ---------- documents */
 .drop{ display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 20px; border: 2px dashed var(--border-strong); border-radius: 18px; background: var(--surface); transition: .15s; }
