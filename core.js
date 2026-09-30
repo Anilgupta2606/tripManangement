@@ -1,0 +1,507 @@
+"use strict";
+/* =========================================================
+   CORE — the saved data, the page shell, sign-in, settings and sync.
+   Data lives in this browser (IndexedDB): the trips, documents' details,
+   itineraries and memories in one record, each file in its own. Sync copies
+   both, encrypted, to private GitHub Gists so the phone sees what the laptop has.
+   ========================================================= */
+
+/* ---------------------------------------------------------------- small helpers */
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid = p => (p || '') + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+function fmtDate(iso, withDow){
+  if(!/^\d{4}-\d{2}-\d{2}/.test(iso || '')) return iso || '';
+  const d = new Date(iso.slice(0, 10) + 'T00:00:00');
+  return (withDow ? DOW[d.getDay()] + ', ' : '') + d.getDate() + ' ' + MON[d.getMonth()] + (d.getFullYear() !== new Date().getFullYear() ? ' ' + d.getFullYear() : '');
+}
+const fmtRange = (a, b) => a && b ? (a === b ? fmtDate(a) : fmtDate(a) + ' – ' + fmtDate(b)) : fmtDate(a || b);
+function ago(ts){
+  const s = Math.round((Date.now() - ts) / 1000);
+  if(s < 60) return 'just now'; if(s < 3600) return Math.round(s / 60) + ' min ago'; if(s < 86400) return Math.round(s / 3600) + ' h ago';
+  return Math.round(s / 86400) + ' d ago';
+}
+const daysUntil = iso => Math.round((Date.parse(iso + 'T00:00:00') - Date.parse(todayISO() + 'T00:00:00')) / 86400000);
+const fmtSize = n => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+const mapsLink = (q, city) => 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent([q, city].filter(Boolean).join(', '));
+function toast(msg, kind){
+  const t = $('toast');
+  t.textContent = msg; t.className = 'toast show ' + (kind || '');
+  clearTimeout(toast.t); toast.t = setTimeout(()=>{ t.className = 'toast'; }, kind === 'error' ? 6000 : 3000);
+}
+function icon(name){
+  const P = {
+    plane: '<path d="M2 16l20-8-20-8 4 8-4 8z" transform="rotate(-30 12 8) translate(0 4)"/>',
+    doc: '<path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/>',
+    map: '<path d="M9 3L3 6v15l6-3 6 3 6-3V3l-6 3z"/><path d="M9 3v15M15 6v15"/>',
+    news: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/>',
+    photo: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M21 17l-5-5-9 9"/>',
+    home: '<path d="M3 11l9-7 9 7v9a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1z"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/>',
+    sync: '<path d="M21 12a9 9 0 01-15.5 6.2M3 12A9 9 0 0118.5 5.8"/><path d="M21 4v5h-5M3 20v-5h5"/>',
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/>',
+    unlock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 017.5-2"/>',
+    trash: '<path d="M4 7h16M10 11v6M14 11v6M5 7l1 13h12l1-13M9 7V4h6v3"/>',
+    edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+    up: '<path d="M12 19V5M5 12l7-7 7 7"/>', down: '<path d="M12 5v14M5 12l7 7 7-7"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>',
+    upload: '<path d="M12 16V4M6 10l6-6 6 6M4 20h16"/>', camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+    spark: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 17l.7 1.8 1.8.7-1.8.7L19 22l-.7-1.8-1.8-.7 1.8-.7z"/>',
+    refresh: '<path d="M20 11A8 8 0 104 13"/><path d="M20 4v7h-7"/>', ext: '<path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6"/>',
+    download: '<path d="M12 4v12M6 10l6 6 6-6M4 20h16"/>', user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/>',
+    shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>', sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/>',
+  };
+  return '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (P[name] || '') + '</svg>';
+}
+
+/* ---------------------------------------------------------------- the saved data */
+const Store = (function(){
+  let dbp = null;
+  function db(){
+    if(dbp) return dbp;
+    dbp = new Promise((res, rej)=>{
+      const r = indexedDB.open('trip-vault', 1);
+      r.onupgradeneeded = ()=>{ const d = r.result; if(!d.objectStoreNames.contains('kv')) d.createObjectStore('kv'); if(!d.objectStoreNames.contains('files')) d.createObjectStore('files'); };
+      r.onsuccess = ()=>res(r.result); r.onerror = ()=>rej(r.error);
+    });
+    return dbp;
+  }
+  async function op(store, mode, fn){
+    const d = await db();
+    return new Promise((res, rej)=>{
+      const tx = d.transaction(store, mode), st = tx.objectStore(store);
+      const r = fn(st);
+      tx.oncomplete = ()=>res(r && 'result' in r ? r.result : undefined);
+      tx.onerror = ()=>rej(tx.error); tx.onabort = ()=>rej(tx.error || new Error('Storage full?'));
+    });
+  }
+  return {
+    get: k => op('kv', 'readonly', s=>s.get(k)),
+    put: (k, v) => op('kv', 'readwrite', s=>s.put(v, k)),
+    getFile: id => op('files', 'readonly', s=>s.get(id)),
+    putFile: (id, v) => op('files', 'readwrite', s=>s.put(v, id)),
+    delFile: id => op('files', 'readwrite', s=>s.delete(id)),
+    fileIds: () => op('files', 'readonly', s=>s.getAllKeys()),
+  };
+})();
+
+const EMPTY = () => ({v: 1, people: [], trips: [], docs: [], plans: {}, memories: [], flightsExtra: [], deleted: {},
+  settings: {readerMode: 'builtin-ai', flightKeys: {}, rules: {}, lastTrip: ''}});
+let S = EMPTY();
+/* What syncs (everything but this device's keys and caches). */
+const LOCAL = {flightStatus: {}, news: {}};
+
+async function load(){
+  const s = await Store.get('state');
+  S = Object.assign(EMPTY(), s || {});
+  S.settings = Object.assign(EMPTY().settings, S.settings || {});
+  const l = await Store.get('local');
+  Object.assign(LOCAL, l || {});
+}
+let saveTimer = null;
+function save(opts){
+  (opts && opts.quiet) || Cloud.markSaved();
+  S.savedAt = Date.now();
+  return Store.put('state', S).then(()=>{
+    if(!(opts && opts.noSync)){ clearTimeout(saveTimer); saveTimer = setTimeout(()=>autoSync(), 4000); }
+  }).catch(e=>toast('Could not save: ' + e.message, 'error'));
+}
+const saveLocal = () => Store.put('local', LOCAL).catch(()=>{});
+const touch = o => { o.updatedAt = Date.now(); return o; };
+function remove(listName, id){
+  S[listName] = S[listName].filter(x=>x.id !== id);
+  S.deleted[id] = Date.now();
+}
+
+/* Two devices' data -> one. Newest edit of each trip/document/memory/plan wins; deletions stick. */
+function mergeData(mine, theirs){
+  const out = JSON.parse(JSON.stringify(mine));
+  out.deleted = Object.assign({}, theirs.deleted || {}, mine.deleted || {});
+  ['people', 'trips', 'docs', 'memories', 'flightsExtra'].forEach(k=>{
+    const by = {};
+    (theirs[k] || []).concat(mine[k] || []).forEach(x=>{ if(!by[x.id] || (x.updatedAt || 0) >= (by[x.id].updatedAt || 0)) by[x.id] = x; });
+    out[k] = Object.values(by).filter(x=>!out.deleted[x.id] || (x.updatedAt || 0) > out.deleted[x.id]);
+  });
+  out.plans = Object.assign({}, theirs.plans || {});
+  Object.entries(mine.plans || {}).forEach(([k, p])=>{ if(!out.plans[k] || (p.updatedAt || 0) >= (out.plans[k].updatedAt || 0)) out.plans[k] = p; });
+  Object.keys(out.plans).forEach(k=>{ if(out.deleted[k]) delete out.plans[k]; });
+  return out;
+}
+
+/* ---------------------------------------------------------------- sync */
+let syncing = false;
+async function autoSync(manual){
+  if(!Cloud.syncConfig() || syncing) return;
+  syncing = true; setSyncBadge('busy');
+  try{
+    await pushFiles();
+    const result = await Cloud.syncNow(()=>S, async data=>{
+      const keep = S.settings;
+      S = Object.assign(EMPTY(), data);
+      S.settings = Object.assign({}, data.settings || {}, {flightKeys: keep.flightKeys, lastTrip: keep.lastTrip, readerMode: keep.readerMode});
+      await Store.put('state', S);
+    }, mergeData);
+    setSyncBadge('ok');
+    if(result === 'pulled' || result === 'merged'){ render(); if(manual) toast('Brought in the changes from your other device.'); }
+    else if(manual) toast(result === 'pushed' ? 'Synced.' : 'Already up to date.');
+  }catch(e){
+    setSyncBadge('error', e.message);
+    if(manual) toast(e.message, 'error');
+  }finally{ syncing = false; }
+}
+/* Documents and photos added here that are not on GitHub yet. */
+async function pushFiles(){
+  const items = S.docs.map(d=>({o: d, fileId: d.fileId})).concat(S.memories.flatMap(m=>(m.photos || []).map(p=>({o: p, fileId: p.fileId}))));
+  let changed = false;
+  for(const it of items){
+    if(it.o.remote || it.o.tooLarge || !it.fileId) continue;
+    const f = await Store.getFile(it.fileId);
+    if(!f) continue;
+    try{ it.o.remote = await Cloud.uploadFile(it.fileId, new Uint8Array(f.bytes), f.mime); }
+    catch(e){ if(/too large/i.test(e.message)) it.o.tooLarge = true; else throw e; }
+    touch(it.o.docRef || it.o); changed = true;
+  }
+  if(changed){ memTouch(); await save({noSync: true}); }
+}
+/* a photo's location is inside its memory: the memory is what syncs as one record */
+function memTouch(){ S.memories.forEach(m=>{ if((m.photos || []).some(p=>p.updatedAt && p.updatedAt > (m.updatedAt || 0))) m.updatedAt = Date.now(); }); }
+/* A document's file: from this device, else fetched (and kept) from GitHub. */
+async function fileFor(o){
+  const f = await Store.getFile(o.fileId);
+  if(f) return {bytes: new Uint8Array(f.bytes), mime: f.mime};
+  if(!o.remote) throw new Error(o.tooLarge ? 'This file was too large to sync; it is only on the device that added it.' : 'This file is on your other device and has not synced yet. Open Trip Vault there to send it.');
+  const got = await Cloud.downloadFile(o.remote);
+  await Store.putFile(o.fileId, {bytes: got.bytes.buffer, mime: got.mime});
+  return got;
+}
+function setSyncBadge(state, msg){
+  const b = $('sync-btn');
+  if(!b) return;
+  b.dataset.state = state;
+  b.title = state === 'error' ? 'Sync problem: ' + msg : state === 'busy' ? 'Syncing…' : Cloud.syncConfig() ? 'Synced ' + (Cloud.syncConfig().syncedAt ? ago(Cloud.syncConfig().syncedAt) : '') : 'Sync is off — set it up in Settings';
+}
+
+/* ---------------------------------------------------------------- reference data */
+let REF = {airports: {}, countries: {}, airlines: {}};
+async function loadReference(){
+  try{
+    const [a, l] = await Promise.all([fetch('data/airports.json').then(r=>r.json()), fetch('data/airlines.json').then(r=>r.json())]);
+    REF = {airports: a.airports, countries: a.countries, airlines: l};
+    Parse.setReference(REF);
+  }catch(e){ console.warn('reference data', e); }
+}
+/* The airports that serve a city (by name, else within 60 km). */
+function cityAirports(city, loc){
+  const c = String(city || '').toLowerCase().trim();
+  const out = [];
+  Object.entries(REF.airports).forEach(([code, a])=>{
+    const m = String(Parse.airport(code).city || '').toLowerCase(), raw = String(a[1] || '').toLowerCase();
+    const same = x => x && (x === c || (x.length > 3 && c.length > 3 && (x.indexOf(c) === 0 || c.indexOf(x) === 0)));
+    if(c && (same(m) || same(raw))) out.push(code);
+    else if(loc && Geo.km(loc, {lat: a[3], lng: a[4]}) < 60) out.push(code);
+  });
+  return out;
+}
+/* Where a city is, for the weather: its airport, else the geocoder, else OpenStreetMap. */
+async function cityLoc(city, country){
+  const ap = cityAirports(city)[0];
+  if(ap){ const a = Parse.airport(ap); return {name: city, lat: a.lat, lng: a.lng, country: a.countryName}; }
+  const g = await Geo.city(city, country).catch(()=>null);
+  if(g) return g;
+  const p = await Geo.place([city, country].filter(Boolean).join(', ')).catch(()=>null);
+  return p ? {name: city, lat: p.lat, lng: p.lng, country: p.country || country} : null;
+}
+const isInternational = f => { const a = Parse.airport(f.from), b = Parse.airport(f.to); return !!(a && b && a.country !== b.country); };
+
+/* ---------------------------------------------------------------- what the documents say, per trip */
+const tripById = id => S.trips.find(t=>t.id === id);
+const docsOf = tripId => S.docs.filter(d=>!tripId || d.tripId === tripId);
+function flightsOf(tripId){
+  const out = [];
+  docsOf(tripId).forEach(d=>(d.fields && d.fields.segments || []).forEach(s=>{
+    if(!s.flight) return;
+    const k = s.flight + '|' + s.date;
+    const have = out.find(x=>x.key === k);
+    if(have){ Object.keys(s).forEach(f=>{ if(s[f] && !have[f]) have[f] = s[f]; }); if(d.type === 'boarding-pass') have.boardingPass = d.id; have.docs.push(d.id); return; }
+    out.push(Object.assign({key: k, docs: [d.id], person: d.person, boardingPass: d.type === 'boarding-pass' ? d.id : ''}, s));
+  }));
+  S.flightsExtra.filter(f=>!tripId || f.tripId === tripId).forEach(f=>{ if(!out.some(x=>x.key === f.flight + '|' + f.date)) out.push(Object.assign({key: f.flight + '|' + f.date, docs: [], manual: f.id}, f)); });
+  out.forEach(f=>{ f.international = isInternational(f); });
+  return out.sort((a, b)=>(a.date + (a.dep || '')).localeCompare(b.date + (b.dep || '')));
+}
+function hotelsOf(tripId){
+  return docsOf(tripId).filter(d=>d.type === 'hotel').map(d=>({doc: d.id, name: d.fields.hotelName || d.title, address: d.fields.address || '', city: d.fields.city || '', country: d.fields.country || '',
+    checkIn: d.fields.checkIn, checkOut: d.fields.checkOut, checkInTime: d.fields.checkInTime, checkOutTime: d.fields.checkOutTime, confirmation: d.fields.confirmation, phone: d.fields.phone}))
+    .sort((a, b)=>String(a.checkIn).localeCompare(String(b.checkIn)));
+}
+/* A trip's cities: its own city, plus every city a hotel or an arriving flight points to. */
+function citiesOf(trip){
+  const out = [];
+  const add = (c, country) => { if(c && !out.some(x=>x.city.toLowerCase() === c.toLowerCase())) out.push({city: c, country: country || ''}); };
+  if(trip.city) add(trip.city, trip.country);
+  hotelsOf(trip.id).forEach(h=>{ if(h.city) add(h.city, h.country); });
+  const fl = flightsOf(trip.id);
+  fl.forEach((f, i)=>{ const next = fl[i + 1]; if(next && next.from === f.to){ const a = Parse.airport(f.to); if(a && a.city && !fl.some((x, j)=>j > i + 1 && x.to === f.to)) return; } const a = Parse.airport(f.to); if(a && i < fl.length - 1) add(a.city, a.countryName); });
+  return out;
+}
+/* Trip dates from its documents when not set by hand. */
+function tripSpan(trip){
+  if(trip.start && trip.end) return {start: trip.start, end: trip.end};
+  const ds = [];
+  docsOf(trip.id).forEach(d=>{ const s = Parse.span(d); if(s.start) ds.push(s.start); if(s.end) ds.push(s.end); });
+  ds.sort();
+  return {start: trip.start || ds[0] || '', end: trip.end || ds[ds.length - 1] || ''};
+}
+
+/* ---------------------------------------------------------------- shell */
+const TABS = [
+  {id: 'trips', label: 'Trips', icon: 'home'},
+  {id: 'docs', label: 'Documents', icon: 'doc'},
+  {id: 'plan', label: 'Itinerary', icon: 'map'},
+  {id: 'news', label: 'News', icon: 'news'},
+  {id: 'flights', label: 'Flights', icon: 'plane'},
+  {id: 'memories', label: 'Memories', icon: 'photo'},
+];
+const VIEWS = {};
+let tab = 'trips';
+function currentTrip(){
+  let t = tripById(S.settings.lastTrip);
+  if(!t){
+    const up = S.trips.map(x=>Object.assign({}, x, tripSpan(x))).filter(x=>!x.end || x.end >= todayISO()).sort((a, b)=>String(a.start).localeCompare(String(b.start)))[0];
+    t = up ? tripById(up.id) : S.trips[S.trips.length - 1];
+  }
+  return t || null;
+}
+function setTrip(id){ S.settings.lastTrip = id; save({quiet: true, noSync: true}); render(); }
+
+function shell(){
+  document.body.innerHTML = `
+  <div class="app">
+    <header class="top">
+      <div class="top-in">
+        <a class="brand" href="#trips">${logo()}<span><b>Trip</b> Vault</span></a>
+        <label class="trip-pick"><span class="sr">Trip</span><select id="trip-pick" aria-label="Current trip"></select></label>
+        <div class="top-actions">
+          <button class="icon-btn" id="sync-btn" data-state="off" aria-label="Sync now">${icon('sync')}</button>
+          <button class="icon-btn" id="settings-btn" aria-label="Settings">${icon('gear')}</button>
+        </div>
+      </div>
+      <nav class="tabs" id="tabs" role="tablist"></nav>
+    </header>
+    <main id="main" tabindex="-1"></main>
+  </div>
+  <nav class="bottom-nav" id="bottom-nav"></nav>
+  <div class="modal" id="modal" hidden><div class="modal-card" id="modal-card" role="dialog" aria-modal="true"></div></div>
+  <div class="viewer" id="viewer" hidden></div>
+  <div class="toast" id="toast" role="status"></div>`;
+  $('sync-btn').onclick = ()=>Cloud.syncConfig() ? autoSync(true) : openSettings('sync');
+  $('settings-btn').onclick = ()=>openSettings();
+  $('trip-pick').onchange = e=>{ if(e.target.value === '__new') { e.target.value = S.settings.lastTrip || ''; VIEWS.newTrip(); } else setTrip(e.target.value); };
+  $('modal').addEventListener('click', e=>{ if(e.target.id === 'modal') closeModal(); });
+  document.addEventListener('keydown', e=>{ if(e.key === 'Escape'){ if(!$('viewer').hidden) closeViewer(); else if(!$('modal').hidden) closeModal(); } });
+  window.addEventListener('hashchange', ()=>{ const t = location.hash.slice(1).split('/')[0]; if(TABS.some(x=>x.id === t) && t !== tab){ tab = t; render(); } });
+  setSyncBadge(Cloud.syncConfig() ? 'ok' : 'off');
+}
+const logo = () => `<svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="var(--brand-bg)"/><path d="M14 40l36-14-36-14 7 14z" fill="var(--brand-fg)"/><path d="M21 26h29" stroke="var(--brand-bg)" stroke-width="3"/><circle cx="46" cy="46" r="6" fill="none" stroke="var(--brand-fg)" stroke-width="3.5"/></svg>`;
+
+function render(){
+  const trips = S.trips.slice().map(t=>Object.assign({}, t, tripSpan(t))).sort((a, b)=>String(b.start).localeCompare(String(a.start)));
+  const cur = currentTrip();
+  $('trip-pick').innerHTML = (trips.length ? '' : '<option value="">No trips yet</option>') +
+    trips.map(t=>`<option value="${esc(t.id)}"${cur && cur.id === t.id ? ' selected' : ''}>${esc(t.name)}${t.start ? ' · ' + esc(fmtRange(t.start, t.end)) : ''}</option>`).join('') + '<option value="__new">+ New trip…</option>';
+  const nav = TABS.map(t=>`<a role="tab" href="#${t.id}" class="${t.id === tab ? 'on' : ''}" aria-selected="${t.id === tab}">${icon(t.icon)}<span>${t.label}</span></a>`).join('');
+  $('tabs').innerHTML = nav; $('bottom-nav').innerHTML = nav;
+  const main = $('main');
+  try{ VIEWS[tab](main, cur); }
+  catch(e){ console.error(e); main.innerHTML = `<div class="card error">Something went wrong drawing this tab: ${esc(e.message)}</div>`; }
+}
+
+/* ---------------------------------------------------------------- modal */
+function openModal(html, opts){
+  $('modal-card').className = 'modal-card' + (opts && opts.wide ? ' wide' : '');
+  $('modal-card').innerHTML = `<button class="icon-btn modal-x" aria-label="Close" data-close>${icon('x')}</button>` + html;
+  $('modal').hidden = false;
+  document.body.classList.add('noscroll');
+  $('modal-card').querySelectorAll('[data-close]').forEach(b=>b.onclick = closeModal);
+  const f = $('modal-card').querySelector('input:not([type=hidden]),select,textarea');
+  if(f && !(opts && opts.noFocus) && matchMedia('(pointer:fine)').matches) f.focus();
+  return $('modal-card');
+}
+function closeModal(){ $('modal').hidden = true; $('modal-card').innerHTML = ''; document.body.classList.remove('noscroll'); }
+function ask(title, label, opts){
+  return new Promise(res=>{
+    const card = openModal(`<h2>${esc(title)}</h2><form id="ask-f"><label>${esc(label)}<input id="ask-v" type="${opts && opts.password ? 'password' : 'text'}" autocomplete="off"></label>
+      ${opts && opts.note ? `<p class="muted">${esc(opts.note)}</p>` : ''}<div class="row end"><button type="button" class="btn ghost" id="ask-no">Cancel</button><button class="btn primary">OK</button></div></form>`);
+    card.querySelector('#ask-f').onsubmit = e=>{ e.preventDefault(); const v = $('ask-v').value; closeModal(); res(v); };
+    card.querySelector('#ask-no').onclick = ()=>{ closeModal(); res(null); };
+    card.querySelector('[data-close]').onclick = ()=>{ closeModal(); res(null); };
+    setTimeout(()=>$('ask-v') && $('ask-v').focus(), 50);
+  });
+}
+function confirmBox(title, text, yes){
+  return new Promise(res=>{
+    const card = openModal(`<h2>${esc(title)}</h2><p>${esc(text)}</p><div class="row end"><button class="btn ghost" id="c-no">Cancel</button><button class="btn danger" id="c-yes">${esc(yes || 'Delete')}</button></div>`, {noFocus: true});
+    card.querySelector('#c-no').onclick = ()=>{ closeModal(); res(false); };
+    card.querySelector('#c-yes').onclick = ()=>{ closeModal(); res(true); };
+  });
+}
+
+/* ---------------------------------------------------------------- sign-in */
+const SESSION = 'tripvault-session';
+const signedIn = () => { try{ return sessionStorage.getItem(SESSION) === 'yes' || localStorage.getItem(SESSION) === 'yes'; }catch(e){ return false; } };
+async function gate(){
+  const src = await Cloud.loginSource();
+  document.body.innerHTML = `<div class="gate"><form id="lf">
+    <div class="brand big">${logo()}<span><b>Trip</b> Vault</span></div>
+    <h1>Welcome back</h1><p class="muted">Tickets, stays, plans and memories — on every device.</p>
+    <label>Username<input id="u" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+    <label>Password<input id="p" type="password" autocomplete="current-password" required></label>
+    <label class="check"><input type="checkbox" id="remember"> Keep me signed in on this device</label>
+    <p class="err" id="e" hidden>That username or password is wrong.</p>
+    <button class="btn primary wide">Sign in</button>
+    <p class="muted small">${src === 'expense-tracker' ? 'The same sign-in as the Expense Tracker.' : src === 'ledger' ? 'The same sign-in as the Ledger.' : S.settings.auth ? 'Your Trip Vault sign-in.' : 'First time: admin / admin — change it in Settings.'}</p></form></div>`;
+  $('u').focus();
+  $('lf').onsubmit = async e=>{
+    e.preventDefault();
+    if(!(await Cloud.checkLogin($('u').value, $('p').value, S.settings.auth))){ $('e').hidden = false; $('p').select(); return; }
+    try{ sessionStorage.setItem(SESSION, 'yes'); if($('remember').checked) localStorage.setItem(SESSION, 'yes'); }catch(_){}
+    start();
+  };
+}
+function signOut(){ try{ sessionStorage.removeItem(SESSION); localStorage.removeItem(SESSION); }catch(e){} location.reload(); }
+
+/* ---------------------------------------------------------------- settings */
+function openSettings(section){
+  const ai = Cloud.aiSettings(), sync = Cloud.syncConfig(), other = Cloud.otherAppSync();
+  const own = Cloud.aiLocal();
+  const fk = S.settings.flightKeys || {};
+  const card = openModal(`<h2>Settings</h2>
+  <div class="settings">
+    <details ${!section || section === 'ai' ? 'open' : ''}><summary>${icon('spark')} AI assistants</summary>
+      <p class="muted">Free AI keys read your documents, plan the itinerary and summarise the news. ${Object.values(ai.from).some(f=>f !== 'trip-vault') ? 'Keys from your Expense Tracker / Ledger in this browser are used automatically.' : 'Keys you added in the Expense Tracker are used here too, in the same browser.'}
+      A <b>Google Gemini</b> key is the most useful: it reads photos and scans, and can search the web for live news and flight status.</p>
+      <div class="keys">${Cloud.PROVIDERS.map(p=>`<label class="key-row"><span>${esc(p.name)} ${ai.from[p.id] && ai.from[p.id] !== 'trip-vault' ? `<em class="chip soft">from ${ai.from[p.id] === 'ledger' ? 'Ledger' : 'Expense Tracker'}</em>` : ''} <a href="${p.signupUrl}" target="_blank" rel="noopener" class="small">get a key</a></span>
+        <input data-ai="${p.id}" type="password" autocomplete="off" placeholder="${esc(ai.from[p.id] && ai.from[p.id] !== 'trip-vault' ? '(using the other app’s key)' : p.placeholder)}" value="${esc((own.keys || {})[p.id] || '')}"></label>`).join('')}</div>
+      <label>Document reader
+        <select id="reader-mode">
+          <option value="builtin-ai">Built-in reader first, then AI fills the gaps (recommended)</option>
+          <option value="ai">AI reader first (built-in if AI is unavailable)</option>
+          <option value="builtin">Built-in reader only — nothing leaves the device</option>
+        </select></label>
+    </details>
+    <details ${section === 'flights' ? 'open' : ''}><summary>${icon('plane')} Flight status</summary>
+      <p class="muted">Live status comes from a free flight-data key, else from Gemini searching the web. <b>AeroDataBox</b> (free on RapidAPI, a few hundred checks a month) works for any date; <b>AirLabs</b> (1,000 free a month) for flights in the next day or so.</p>
+      <label>AeroDataBox RapidAPI key <a class="small" href="https://rapidapi.com/aedbx-aedbx/api/aerodatabox" target="_blank" rel="noopener">get one</a><input id="k-adb" type="password" autocomplete="off" value="${esc(fk.aerodatabox || '')}"></label>
+      <label>AirLabs key <a class="small" href="https://airlabs.co/signup" target="_blank" rel="noopener">get one</a><input id="k-al" type="password" autocomplete="off" value="${esc(fk.airlabs || '')}"></label>
+    </details>
+    <details ${section === 'sync' ? 'open' : ''}><summary>${icon('sync')} Phone ↔ laptop sync</summary>
+      <p class="muted">Your trips and documents are encrypted on this device with a passphrase, then kept in private GitHub Gists. Use the same token and passphrase on the phone and they see the same vault. GitHub only ever holds unreadable data.</p>
+      ${sync ? `<p>Sync is <b>on</b>${sync.syncedAt ? ' · last synced ' + esc(ago(sync.syncedAt)) : ''}${sync.lastError ? `<br><span class="err">${esc(sync.lastError)}</span>` : ''}</p>
+        <div class="row"><button class="btn primary" id="sync-now">${icon('sync')} Sync now</button><button class="btn ghost" id="sync-off">Turn off on this device</button></div>`
+      : `${other ? `<button class="btn soft" id="sync-reuse">Use the same sync as my Expense Tracker / Ledger</button><p class="muted small">or enter them:</p>` : ''}
+        <label>GitHub token (fine-grained, permission “Gists: read and write”) <a class="small" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">create</a><input id="s-token" type="password" autocomplete="off"></label>
+        <label>Sync passphrase (the same on every device; it cannot be recovered)<input id="s-pass" type="password" autocomplete="new-password"></label>
+        <button class="btn primary" id="sync-on">Turn on sync</button>`}
+    </details>
+    <details ${section === 'people' ? 'open' : ''}><summary>${icon('user')} People</summary>
+      <p class="muted">Whose documents: add everyone you travel with. New names from uploads are added here too.</p>
+      <div id="people-list" class="chips">${S.people.map(p=>`<span class="chip">${esc(p.name)} <button class="chip-x" data-del-person="${esc(p.id)}" aria-label="Remove ${esc(p.name)}">×</button></span>`).join('') || '<span class="muted">No one yet.</span>'}</div>
+      <form id="person-f" class="row"><input id="person-n" placeholder="Name"><button class="btn soft">Add</button></form>
+    </details>
+    <details><summary>${icon('lock')} Sign-in, theme, backup</summary>
+      ${Cloud.loginSource ? '<p class="muted" id="login-note"></p>' : ''}
+      <form id="pw-f" hidden><label>Username<input id="pw-u" autocomplete="username"></label><label>New password<input id="pw-p" type="password" autocomplete="new-password"></label><button class="btn soft">Set sign-in</button></form>
+      <label>Theme<select id="theme"><option value="">Match the device</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+      <div class="row"><button class="btn soft" id="backup">${icon('download')} Download a backup (details only)</button><label class="btn soft file-btn">Restore backup<input type="file" id="restore" accept=".json,application/json" hidden></label></div>
+      <div class="row"><button class="btn ghost" id="signout">Sign out</button></div>
+    </details>
+  </div>
+  <div class="row end sticky-foot"><button class="btn ghost" data-close>Close</button><button class="btn primary" id="settings-save">Save</button></div>`, {wide: true, noFocus: true});
+
+  card.querySelector('#reader-mode').value = S.settings.readerMode || 'builtin-ai';
+  let theme = ''; try{ theme = localStorage.getItem('tripvault-theme') || ''; }catch(e){}
+  card.querySelector('#theme').value = theme;
+  card.querySelector('#theme').onchange = e=>applyTheme(e.target.value, true);
+  Cloud.loginSource().then(src=>{
+    const n = $('login-note');
+    if(!n) return;
+    if(src === 'expense-tracker') n.textContent = 'You sign in with your Expense Tracker username and password — change it there.';
+    else if(src === 'ledger') n.textContent = 'You sign in with your Ledger username and password — change it there.';
+    else { n.textContent = S.settings.auth ? 'Change your Trip Vault sign-in:' : 'You are using admin / admin. Set your own:'; $('pw-f').hidden = false; }
+  });
+  card.querySelector('#pw-f').onsubmit = async e=>{
+    e.preventDefault();
+    const u = $('pw-u').value.trim().toLowerCase(), p = $('pw-p').value;
+    if(!u || p.length < 4) return toast('Pick a username and a password of 4+ characters.', 'error');
+    S.settings.auth = {user: u, hash: await Cloud.sha256(u + ':' + p)};
+    save(); toast('Sign-in changed.');
+  };
+  card.querySelector('#person-f').onsubmit = e=>{ e.preventDefault(); const n = $('person-n').value.trim(); if(n){ addPerson(n); save(); openSettings('people'); } };
+  card.querySelectorAll('[data-del-person]').forEach(b=>b.onclick = ()=>{ remove('people', b.dataset.delPerson); save(); openSettings('people'); });
+  card.querySelector('#settings-save').onclick = ()=>{
+    const o = Cloud.aiLocal(); o.keys = o.keys || {};
+    card.querySelectorAll('[data-ai]').forEach(i=>{ const v = i.value.trim(); if(v) o.keys[i.dataset.ai] = v; else delete o.keys[i.dataset.ai]; });
+    Cloud.saveAiLocal(o);
+    S.settings.readerMode = $('reader-mode').value;
+    S.settings.flightKeys = {aerodatabox: $('k-adb').value.trim(), airlabs: $('k-al').value.trim()};
+    save({quiet: true});
+    closeModal(); render(); toast('Settings saved.');
+  };
+  const on = async (token, pass)=>{
+    if(!token || !pass) return toast('Enter both the token and the passphrase.', 'error');
+    Cloud.saveSyncConfig({token, pass});
+    closeModal(); toast('Sync is on. Syncing…');
+    await autoSync(true);
+  };
+  if(card.querySelector('#sync-on')) card.querySelector('#sync-on').onclick = ()=>on($('s-token').value.trim(), $('s-pass').value);
+  if(card.querySelector('#sync-reuse')) card.querySelector('#sync-reuse').onclick = ()=>on(other.token, other.pass);
+  if(card.querySelector('#sync-now')) card.querySelector('#sync-now').onclick = ()=>{ closeModal(); autoSync(true); };
+  if(card.querySelector('#sync-off')) card.querySelector('#sync-off').onclick = ()=>{ Cloud.forgetSync(); setSyncBadge('off'); openSettings('sync'); };
+  card.querySelector('#backup').onclick = ()=>{
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], {type: 'application/json'}));
+    a.download = 'trip-vault-backup-' + todayISO() + '.json'; a.click();
+  };
+  card.querySelector('#restore').onchange = async e=>{
+    const f = e.target.files[0]; if(!f) return;
+    try{
+      const d = JSON.parse(await f.text());
+      if(!Array.isArray(d.trips) || !Array.isArray(d.docs)) throw new Error('Not a Trip Vault backup.');
+      S = mergeData(S, d); await save(); closeModal(); render(); toast('Backup restored (merged with what was here).');
+    }catch(err){ toast(err.message, 'error'); }
+  };
+  card.querySelector('#signout').onclick = signOut;
+}
+function addPerson(name){
+  name = String(name || '').trim();
+  if(!name) return null;
+  const have = S.people.find(p=>p.name.toLowerCase() === name.toLowerCase());
+  if(have) return have;
+  const p = touch({id: uid('p'), name});
+  S.people.push(p);
+  return p;
+}
+function applyTheme(t, store){
+  if(t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+  if(store) try{ if(t) localStorage.setItem('tripvault-theme', t); else localStorage.removeItem('tripvault-theme'); }catch(e){}
+}
+
+/* ---------------------------------------------------------------- start */
+async function start(){
+  shell();
+  const h = location.hash.slice(1).split('/')[0];
+  if(TABS.some(t=>t.id === h)) tab = h;
+  render();
+  Cloud.loadAi().then(()=>render());
+  autoSync();
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'visible') autoSync(); });
+}
+window.addEventListener('DOMContentLoaded', async function boot(){
+  try{ applyTheme(localStorage.getItem('tripvault-theme') || ''); }catch(e){}
+  await Promise.all([load(), loadReference()]);
+  if('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(()=>{});
+  if(signedIn()) start(); else gate();
+});
