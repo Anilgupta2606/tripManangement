@@ -7,6 +7,8 @@
    Syncs like everything else, so the phone and the laptop share it.
    ========================================================= */
 
+/* Cut at a word, with an ellipsis */
+const clip = (t, n) => { t = String(t || '').trim(); if(t.length <= n) return t; const c = t.slice(0, n); return c.slice(0, Math.max(c.lastIndexOf(' '), n * .6)).replace(/[,;:.\s]+$/, '') + '…'; };
 const shopState = {guides: {}, open: {}, loading: new Set()};
 
 /* The trip's places: home first (where the first flight leaves from), then every city of the trip. */
@@ -48,14 +50,14 @@ function shopCard(trip, p, i){
   return `<article class="card shop" data-shop="${i}">
     <header class="shop-head"><div><h2>${p.home ? '🏠' : '📍'} ${esc(p.city)}</h2><p class="muted small">${p.home ? 'Buy before you leave' : 'Buy there'}${items.length ? ' · ' + (left ? left + ' to buy' : 'all bought ✓') : ''}</p></div></header>
     <form class="shop-add" data-add="${i}">
-      <input name="text" placeholder="${p.home ? 'e.g. sunscreen, adapter, snacks for the flight' : 'e.g. dates, perfume, gold chain for Maa'}" aria-label="Item" autocomplete="off" required>
+      <input name="text" placeholder="${p.home ? 'Add an item, e.g. adapter' : 'Add an item, e.g. dates'}" aria-label="Item" autocomplete="off" required>
       <input name="qty" placeholder="Qty" aria-label="How many" class="qty">
       <input name="who" placeholder="For" aria-label="For whom" list="sh-people" class="who">
       <button class="btn primary small">${icon('plus')} Add</button>
     </form>
     <ul class="shop-list">${items.map(x=>shopRow(x)).join('') || `<li class="muted small empty">Nothing yet.</li>`}</ul>
     ${!p.home ? `<details class="shop-where"${shopState.open[p.city] ? ' open' : ''} data-where="${esc(p.city)}"><summary class="small">Where to shop in ${esc(p.city)}${shops ? ' (' + shops.length + ')' : ''}</summary>
-      ${shops ? `<ul class="history small">${shops.map(s=>`<li><a href="${mapsLink(s.name + ', ' + p.city)}" target="_blank" rel="noopener">${esc(s.name)}</a>${s.area ? ` <span class="muted">· ${esc(s.area)}</span>` : ''}${s.hours ? ` <span class="muted">· ${esc(s.hours.slice(0, 50))}</span>` : ''}${s.note ? `<div class="muted">${esc(s.note.slice(0, 120))}</div>` : ''}</li>`).join('')}</ul>`
+      ${shops ? `<ul class="history small">${shops.map(s=>`<li><a href="${mapsLink(s.name + ', ' + p.city)}" target="_blank" rel="noopener">${esc(s.name)}</a>${s.area ? ` <span class="muted">· ${esc(s.area)}</span>` : ''}${s.hours ? ` <span class="muted">· ${esc(s.hours.slice(0, 50))}</span>` : ''}${s.note ? `<div class="muted">${esc(clip(s.note, 130))}</div>` : ''}</li>`).join('')}</ul>`
         : `<p class="muted small">${g === null ? 'The travel guide has no shopping list for ' + esc(p.city) + '.' : 'Looking it up…'}</p>`}</details>` : ''}
   </article>`;
 }

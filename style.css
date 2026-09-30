@@ -528,8 +528,9 @@ fieldset.types p{ flex-basis: 100%; margin: 0; }
 .shop-add input{ min-width: 0; }
 .shop-list{ list-style: none; margin: 0; padding: 0; }
 .shop-item{ display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 8px; padding: 9px 0; border-top: 1px solid var(--border); }
-.shop-item .tick{ display: flex; align-items: center; gap: 10px; font-size: 15px; cursor: pointer; }
-.shop-item .tick input{ width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+label.tick{ display: flex; flex-direction: row; align-items: center; gap: 10px; font-size: 15px; font-weight: 500; color: var(--ink); cursor: pointer; min-width: 0; }
+label.tick input{ width: 20px; height: 20px; min-height: 0; padding: 0; margin: 0; accent-color: var(--accent); flex: none; }
+label.tick span{ overflow-wrap: anywhere; }
 .shop-item .meta{ grid-column: 1; padding-left: 30px; }
 .shop-item .meta:empty{ display: none; }
 .shop-item .acts{ grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 2px; }
