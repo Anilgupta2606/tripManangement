@@ -364,3 +364,13 @@ main:focus{ outline: none; }
   body{ background: #fff; }
   .card{ box-shadow: none; break-inside: avoid; }
 }
+
+/* ---------- city suggestions */
+.has-suggest{ position: relative; }
+.suggest{ position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; z-index: 90; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px;
+  box-shadow: 0 12px 30px rgb(0 0 0 / .14); max-height: 300px; overflow: auto; }
+.suggest .sg{ display: flex; flex-direction: column; padding: 9px 12px; cursor: pointer; border-top: 1px solid var(--border); font-weight: 500; }
+.suggest .sg:first-child{ border-top: 0; }
+.suggest .sg b{ font-weight: 700; color: var(--ink); }
+.suggest .sg span{ font-size: 12px; color: var(--muted); }
+.suggest .sg.on, .suggest .sg:hover{ background: var(--accent-soft); }

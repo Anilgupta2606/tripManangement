@@ -19,6 +19,7 @@ VIEWS.newTrip = function(prefill, after){
       <label class="span2">Notes<textarea id="t-notes" rows="2" placeholder="Anything to remember">${esc(p.notes || '')}</textarea></label>
       <div class="row end span2">${p.id ? '<button type="button" class="btn danger ghost" id="t-del">Delete trip</button>' : ''}<button type="button" class="btn ghost" data-close>Cancel</button><button class="btn primary">${p.id ? 'Save' : 'Create trip'}</button></div>
     </form>`);
+  citySuggest(card.querySelector('#t-city'), card.querySelector('#t-country'));
   card.querySelector('#trip-f').onsubmit = e=>{
     e.preventDefault();
     const t = p.id ? tripById(p.id) : {id: uid('t'), createdAt: Date.now()};
@@ -335,6 +336,7 @@ function readForm(el, base){
   return {person: g('person'), type: g('type'), tripId: g('tripId'), title: g('title'), fields};
 }
 function bindReview(el, q){
+  citySuggest(el.querySelector('[data-f="city"]'), el.querySelector('[data-f="country"]'));
   const keep = ()=>{ const v = readForm(el, q.result.fields); q.person = v.person; q.tripId = v.tripId === '__new' ? q.tripId : v.tripId; q.title = v.title; q.result.fields = v.fields; q.result.type = v.type; };
   el.querySelector('[data-k="type"]').onchange = ()=>{ keep(); drawQueueItem(q); };
   el.querySelectorAll('[data-seg-x]').forEach(b=>b.onclick = ()=>{ keep(); q.result.fields.segments.splice(+b.dataset.segX, 1); drawQueueItem(q); });
@@ -454,6 +456,7 @@ function editDoc(d){
     </div>${fieldsEditor(d.type, d.fields)}
     <div class="row end">${Cloud.aiAvailable() && d.text ? `<button class="btn soft" id="ed-ai">${icon('spark')} Read again with AI</button>` : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="ed-save">Save</button></div></div>`, {wide: true, noFocus: true});
   const el = card.querySelector('#edit-doc');
+  citySuggest(el.querySelector('[data-f="city"]'), el.querySelector('[data-f="country"]'));
   el.querySelector('[data-k="type"]').onchange = ()=>{ const v = readForm(el, d.fields); Object.assign(d, v); editDoc(d); };
   el.querySelectorAll('[data-seg-x]').forEach(b=>b.onclick = ()=>{ const v = readForm(el, d.fields); v.fields.segments.splice(+b.dataset.segX, 1); Object.assign(d, v); editDoc(d); });
   const add = el.querySelector('[data-seg-add]');

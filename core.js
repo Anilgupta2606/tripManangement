@@ -533,3 +533,116 @@ window.addEventListener('DOMContentLoaded', async function boot(){
   if('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(()=>{});
   if(signedIn()) start(); else gate();
 });
+
+/* ---------------------------------------------------------------- places: city and country pickers
+   Type a city: matching cities appear with their country - from the airports list and popular places
+   (works offline), then from a worldwide place search. Picking one fills the city and the country. */
+const Places = (function(){
+  // popular places with no airport of their own (the airports list covers the rest)
+  const EXTRA = [['Manali','IN'],['Shimla','IN'],['Munnar','IN'],['Ooty','IN'],['Rishikesh','IN'],['Haridwar','IN'],['Mussoorie','IN'],['Nainital','IN'],['Darjeeling','IN'],['Gangtok','IN'],
+    ['Coorg','IN'],['Alleppey','IN'],['Kochi','IN'],['Pondicherry','IN'],['Hampi','IN'],['Gokarna','IN'],['Varkala','IN'],['Kovalam','IN'],['Lonavala','IN'],['Mahabaleshwar','IN'],['Matheran','IN'],
+    ['Alibaug','IN'],['Kodaikanal','IN'],['Mount Abu','IN'],['Pushkar','IN'],['Ranthambore','IN'],['Jim Corbett','IN'],['Auli','IN'],['Kasol','IN'],['Dharamshala','IN'],['McLeod Ganj','IN'],
+    ['Spiti Valley','IN'],['Havelock Island','IN'],['Mahabalipuram','IN'],['Agra','IN'],['Mathura','IN'],['Vrindavan','IN'],['Ajmer','IN'],['Jaipur','IN'],['Shirdi','IN'],['Tirupati','IN'],
+    ['Interlaken','CH'],['Zermatt','CH'],['Lucerne','CH'],['Grindelwald','CH'],['Hallstatt','AT'],['Salzburg','AT'],['Bruges','BE'],['Cappadocia','TR'],['Pamukkale','TR'],['Santorini','GR'],
+    ['Kyoto','JP'],['Nara','JP'],['Hakone','JP'],['Ubud','ID'],['Phi Phi Islands','TH'],['Pattaya','TH'],['Chiang Mai','TH'],['Sentosa','SG'],['Genting Highlands','MY'],['Pokhara','NP'],
+    ['Thimphu','BT'],['Paro','BT'],['Maafushi','MV'],['Kandy','LK'],['Ella','LK'],['Galle','LK'],['Ha Long Bay','VN'],['Hoi An','VN'],['Siem Reap','KH'],['Cotswolds','GB'],['Edinburgh','GB'],
+    ['Florence','IT'],['Venice','IT'],['Amalfi','IT'],['Cinque Terre','IT'],['Nice','FR'],['Versailles','FR'],['Niagara Falls','CA'],['Banff','CA'],['Queenstown','NZ'],['Cairns','AU']];
+  const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  let list = null;
+  function all(){
+    if(list) return list;
+    const seen = new Set(); list = [];
+    const add = (city, cc) => { if(!city) return; const k = norm(city) + '|' + cc; if(seen.has(k)) return; seen.add(k); list.push({city, country: REF.countries[cc] || cc, key: norm(city)}); };
+    EXTRA.forEach(([c, cc])=>add(c, cc));
+    Object.keys(REF.airports).forEach(code=>{ const a = Parse.airport(code); add(a.city, a.country); });
+    return list;
+  }
+  const countries = () => Object.values(REF.countries).sort((a, b)=>a.localeCompare(b));
+  /* the offline list, best first: exact, then starts with, then a word starts with */
+  function local(q){
+    const n = norm(q);
+    if(n.length < 2) return [];
+    const rank = p => p.key === n ? 0 : p.key.indexOf(n) === 0 ? 1 : p.key.split(/[\s-]+/).some(w=>w.indexOf(n) === 0) ? 2 : 9;
+    return all().map(p=>[rank(p), p]).filter(x=>x[0] < 9).sort((a, b)=>a[0] - b[0] || a[1].city.length - b[1].city.length).slice(0, 8).map(x=>x[1]);
+  }
+  const cache = {};
+  /* the worldwide search (any town), biggest places first */
+  async function online(q){
+    const n = norm(q);
+    if(n.length < 3) return [];
+    if(cache[n]) return cache[n];
+    try{
+      const d = await (await fetch('https://geocoding-api.open-meteo.com/v1/search?count=10&language=en&name=' + encodeURIComponent(q.trim()))).json();
+      return cache[n] = (d.results || []).sort((a, b)=>(b.population || 0) - (a.population || 0))
+        .map(r=>({city: r.name, country: r.country || '', region: r.admin1 || '', key: norm(r.name)}));
+    }catch(e){ return []; }
+  }
+  /* the country of a city typed in full, when there is only one such city */
+  function countryOf(city){
+    const n = norm(city), hits = all().filter(p=>p.key === n);
+    const cs = Array.from(new Set(hits.map(h=>h.country)));
+    return cs.length === 1 ? cs[0] : '';
+  }
+  return {local, online, countries, countryOf, norm};
+})();
+
+/* Suggestions under a city box; picking one fills the city and (if given) the country box.
+   opts.first: places to offer before typing (e.g. the trip's cities); opts.onPick(place). */
+function citySuggest(cityInput, countryInput, opts){
+  opts = opts || {};
+  if(!cityInput || cityInput.dataset.suggest) return;
+  cityInput.dataset.suggest = '1';
+  cityInput.setAttribute('autocomplete', 'off');
+  cityInput.removeAttribute('list');
+  const box = document.createElement('div');
+  box.className = 'suggest'; box.hidden = true; box.setAttribute('role', 'listbox');
+  cityInput.insertAdjacentElement('afterend', box);
+  if(cityInput.parentElement) cityInput.parentElement.classList.add('has-suggest');
+  if(countryInput) countryPicker(countryInput);
+  let items = [], active = -1, seq = 0;
+  const draw = () => {
+    box.innerHTML = items.map((p, i)=>`<div class="sg${i === active ? ' on' : ''}" role="option" data-i="${i}"><b>${esc(p.city)}</b><span>${esc([p.region, p.country].filter(Boolean).join(', '))}</span></div>`).join('');
+    box.hidden = !items.length;
+  };
+  const merge = (a, b) => { const seen = new Set(); return a.concat(b).filter(p=>{ const k = Places.norm(p.city) + '|' + Places.norm(p.country); if(seen.has(k)) return false; seen.add(k); return true; }).slice(0, 10); };
+  const pick = p => {
+    cityInput.value = p.city;
+    if(countryInput && p.country) countryInput.value = p.country;
+    items = []; draw();
+    if(opts.onPick) opts.onPick(p);
+    cityInput.dispatchEvent(new Event('change', {bubbles: true}));
+  };
+  const update = async () => {
+    const q = cityInput.value, my = ++seq;
+    const firsts = (opts.first || []).filter(p=>!q || Places.norm(p.city).indexOf(Places.norm(q)) === 0);
+    items = merge(firsts, Places.local(q)); active = -1; draw();
+    if(q.trim().length >= 3){
+      const more = await Places.online(q);
+      if(my === seq && document.activeElement === cityInput){ items = merge(items, more); draw(); }
+    }
+  };
+  let t = null;
+  cityInput.addEventListener('input', ()=>{ clearTimeout(t); t = setTimeout(update, 180); });
+  cityInput.addEventListener('focus', ()=>{ if(opts.first && opts.first.length && !cityInput.value) update(); });
+  cityInput.addEventListener('keydown', e=>{
+    if(box.hidden) return;
+    if(e.key === 'ArrowDown'){ active = Math.min(items.length - 1, active + 1); draw(); e.preventDefault(); }
+    else if(e.key === 'ArrowUp'){ active = Math.max(0, active - 1); draw(); e.preventDefault(); }
+    else if(e.key === 'Enter' && active >= 0){ e.preventDefault(); pick(items[active]); }
+    else if(e.key === 'Escape'){ items = []; draw(); }
+  });
+  box.addEventListener('mousedown', e=>{ const el = e.target.closest('.sg'); if(el){ e.preventDefault(); pick(items[+el.dataset.i]); } });
+  cityInput.addEventListener('blur', ()=>setTimeout(()=>{
+    items = []; draw();
+    // a city typed in full: its country, when there is only one such city
+    if(countryInput && !countryInput.value.trim() && cityInput.value.trim()){ const c = Places.countryOf(cityInput.value); if(c) countryInput.value = c; }
+  }, 150));
+}
+/* Every country, to pick from as you type. */
+function countryPicker(input){
+  if(!input) return;
+  let dl = document.getElementById('dl-countries');
+  if(!dl){ dl = document.createElement('datalist'); dl.id = 'dl-countries'; dl.innerHTML = Places.countries().map(c=>`<option value="${esc(c)}">`).join(''); document.body.appendChild(dl); }
+  input.setAttribute('list', 'dl-countries');
+  input.setAttribute('autocomplete', 'off');
+}

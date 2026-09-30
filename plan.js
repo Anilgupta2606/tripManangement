@@ -6,7 +6,7 @@
    what must stay, and tell the AI what you don't like in the issues box.
    ========================================================= */
 
-const planState = {city: '', busy: false, ctl: null, web: true};
+const planState = {city: '', busy: false, ctl: null, web: true, countries: {}};
 const planKey = (tripId, city) => tripId + '|' + String(city || '').toLowerCase();
 const LOCAL_WEATHER = {};
 
@@ -25,7 +25,9 @@ function planContext(trip, city, plan){
   const rules = Object.assign({}, S.settings.rules || {});
   if(hotelHere && hotelHere.checkInTime) rules.checkInTime = hotelHere.checkInTime;
   if(hotelHere && hotelHere.checkOutTime) rules.checkOutTime = hotelHere.checkOutTime;
-  return {trip, city, country: (plan && plan.country) || trip.country || '', start, end, hotel, arrival: a.arrival, departure: a.departure, airports, flights: fl, rules,
+  const known = citiesOf(trip).find(x=>x.city.toLowerCase() === lc);
+  const country = (plan && plan.country) || planState.countries[lc] || (known && known.country) || Places.countryOf(city) || trip.country || '';
+  return {trip, city, country, start, end, hotel, arrival: a.arrival, departure: a.departure, airports, flights: fl, rules,
     weather: LOCAL_WEATHER[planKey(trip.id, city)] || null};
 }
 
@@ -44,7 +46,7 @@ VIEWS.plan = function(main, cur){
     <div class="row">${plan ? `<button class="btn ghost" id="p-undo" ${plan.versions && plan.versions.length ? '' : 'disabled'}>Undo</button><button class="btn ghost" id="p-copy">Copy as text</button>` : ''}<button class="btn soft" id="p-rules">${icon('shield')} Rules</button></div></section>
   <section class="card plan-setup">
     <div class="grid4">
-      <label>City<input id="p-city" list="p-cities" value="${esc(planState.city)}" placeholder="Where"><datalist id="p-cities">${cities.map(c=>`<option value="${esc(c.city)}">`).join('')}</datalist></label>
+      <label>City${ctx.country ? ` <span class="muted small">· ${esc(ctx.country)}</span>` : ''}<input id="p-city" value="${esc(planState.city)}" placeholder="Where"></label>
       <label>From<input type="date" id="p-start" value="${esc(ctx.start || '')}"></label>
       <label>To<input type="date" id="p-end" value="${esc(ctx.end || '')}"></label>
       <label>Staying at<input id="p-hotel" list="p-hotels" value="${esc(ctx.hotel.name)}" placeholder="Hotel or area"><datalist id="p-hotels">${hotelsOf(cur.id).map(h=>`<option value="${esc(h.name)}">`).join('')}</datalist></label>
@@ -88,6 +90,9 @@ VIEWS.plan = function(main, cur){
     const p = S.plans[key];
     if(p){ p.start = $('p-start').value; p.end = $('p-end').value; p.hotel = Object.assign({}, p.hotel, {name: $('p-hotel').value.trim()}); touch(p); save(); render(); }
   };
+  // the city: the trip's own first, then any city in the world - its country comes with it
+  citySuggest($('p-city'), null, {first: cities.map(c=>({city: c.city, country: c.country, region: 'this trip'})),
+    onPick: p=>{ planState.countries[p.city.toLowerCase()] = p.country; }});
   ['p-city', 'p-start', 'p-end', 'p-hotel'].forEach(id=>$(id).onchange = reSetup);
   $('p-rules').onclick = ()=>openRules();
   if($('p-web')) $('p-web').onchange = e=>{ planState.web = e.target.checked; };
