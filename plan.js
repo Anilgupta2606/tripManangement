@@ -84,7 +84,7 @@ VIEWS.plan = function(main, cur){
   <section class="days" id="days">${plan.days.map((d, di)=>dayCard(d, di, problems, ctx)).join('')}</section>
   <section class="card issues">
     <h2>${icon('spark')} Not happy with it? Say what to change</h2>
-    <p class="muted small">For example: “Day 2 is too packed”, “I have a meeting on the 14th at 3 pm”, “add a beach day”, “we are vegetarian”, “no temples, more food places”. Items you lock ${icon('lock')} are kept as they are.</p>
+    <p class="muted small">${BRAIN ? 'Trip Vault’s planner makes the change in seconds; ' + (Cloud.aiAvailable() ? 'what it cannot do (a place it cannot fit or find, a request it does not understand) goes to the AI, and a plan the AI made is changed by the AI. ' : 'add a free AI key in Setup for what it cannot do. ') : ''}For example: “Day 2 is too packed”, “I have a meeting on the 14th at 3 pm”, “add a beach day”, “we are vegetarian”, “no temples, more food places”. Items you lock ${icon('lock')} are kept as they are.</p>
     <textarea id="p-issue" rows="3" placeholder="What should change?"></textarea>
     <div class="row"><button class="btn primary" id="p-send" ${Cloud.aiAvailable() || BRAIN ? '' : 'disabled'}>Update the plan</button><span class="muted small">${plan.by ? 'Last planned by ' + esc(plan.by) : ''}</span></div>
     ${(plan.used || []).length ? `<p class="muted small">Planned with: ${esc(plan.used.join(' · '))}.</p>` : ''}
@@ -418,6 +418,17 @@ async function brainPlan(trip, c, what){
   }catch(e){ Busy.done('Could not plan: ' + e.message, true); }
   finally{ planState.busy = false; }
 }
+/* Trip Vault's own planner first; when it could not place or find a place you asked for by name, the AI is asked
+   (it can do what the planner cannot - make Global Village the evening, with dinner there). */
+async function brainThenAI(trip, c, text){
+  await brainPlan(trip, c, text);
+  const p = S.plans[planKey(trip.id, c.city)], a = (p && p.asked) || {};
+  const missed = (a.unplaced || []).concat(a.notFound || []);
+  if(!missed.length || !Cloud.aiAvailable()) return;
+  toast('Trip Vault’s planner could not fit ' + missed.join(', ') + ' — asking the AI');
+  return aiPlan(trip, c, text + ' (Trip Vault\'s planner could not fit ' + missed.join(', ') + ' — fit it in at a time it is open; it may replace another place or be the evening, with dinner there)', $('p-send'));
+}
+
 /* "Not happy with it?": understood here when it can be (pace, food, kinds of places, times, a meeting, a free evening),
    else the AI is asked. What it understood is also learned for next time. */
 async function askChange(trip, c, text){
@@ -452,7 +463,7 @@ async function askChange(trip, c, text){
       save({quiet: true});
       toast('Understood: ' + r.said.join(' · '));
       if($('p-issue')) $('p-issue').value = '';
-      return brainPlan(trip, c, text);
+      return brainThenAI(trip, c, text);
     }
     if(!Cloud.aiAvailable()) return toast('Not understood without AI. Try: “day 2 is too packed”, “we are vegetarian”, “no temples”, “more museums”, “meeting on the 24th at 3 pm”, “keep the evening free on day 3”.', 'error');
     // not read here: the AI only translates it into Money Brain's actions (quick), and the words are remembered
@@ -468,7 +479,7 @@ async function askChange(trip, c, text){
         save({quiet: true});
         toast('Understood (with ' + tr.by + ', remembered for next time): ' + r2.said.join(' · '));
         if($('p-issue')) $('p-issue').value = '';
-        return brainPlan(trip, c, text);
+        return brainThenAI(trip, c, text);
       }
     }catch(e){ Busy.stop(); }
   }

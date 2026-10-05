@@ -170,13 +170,17 @@ const TripBrain = (function(){
       const fixed = day.items.filter(it=>it.kind !== 'free');
       const busy = fixed.filter(it=>Ru.toMin(it.start) !== null).map(it=>({s: Ru.toMin(it.start), e: Math.max(Ru.toMin(it.end) || 0, Ru.toMin(it.start) + 1), title: it.title,
         lat: /hotel|check/i.test(it.title) && hotel ? hotel.lat : null, lng: /hotel|check/i.test(it.title) && hotel ? hotel.lng : null}));
-      const max = maxOf(day, di) - fixed.filter(it=>['sight', 'activity', 'shopping'].indexOf(it.kind) >= 0).length;
+      const openOn = c => { const h = c.hours && c.hours.days[new Date(day.date + 'T00:00:00Z').getUTCDay()]; return !h || h.length > 0; };
+      // a place you asked for by name, not planned yet and open today, gets a slot even on a full day
+      const wantToday = all.filter(c=>askedIds.has(c.id) && !isUsed(c) && openOn(c));
+      const max = Math.max(maxOf(day, di) - fixed.filter(it=>['sight', 'activity', 'shopping'].indexOf(it.kind) >= 0).length, wantToday.length ? 1 : 0);
       let stops = [];
       if(max > 0){
         // one area a day: the best place left anchors the day, the rest are valued by how close they are to it
-        const left = all.filter(c=>!isUsed(c) && (c.value > 0 || askedIds.has(c.id)) && (c.km == null || c.km < 35));
+        // (a place you asked for by name is never left out for its distance)
+        const left = all.filter(c=>!isUsed(c) && (askedIds.has(c.id) || (c.value > 0 && (c.km == null || c.km < 35))));
         const arrivalDay = ctx.arrival && ctx.arrival.date === day.date, lastDay = ctx.departure && ctx.departure.date === day.date;
-        const pool = left.filter(c=>!(arrivalDay || lastDay) || c.km == null || c.km < 4);
+        const pool = left.filter(c=>askedIds.has(c.id) || !(arrivalDay || lastDay) || c.km == null || c.km < 4);
         // the day's anchor: the best-known must-see not yet planned (open that day); else the best place left
         const openThatDay = c => { const h = c.hours && c.hours.days[new Date(day.date + 'T00:00:00Z').getUTCDay()]; return !h || h.length > 0; };
         // a re-plan keeps each day close to the plan you have: its places stay unless a request needs them to move
@@ -188,7 +192,7 @@ const TripBrain = (function(){
         const dayCands = pool.map(c=>Object.assign({}, c, {value: c.value + (askedIds.has(c.id) ? 1.5 : 0) + (kept(c) ? 1.0 : 0) + (mustIds.has(c.id) ? 0.6 : 0) + (anchor && c.id === anchor.id ? 0.5 : 0)
             - (anchor && c.lat != null && anchor.lat != null ? 0.07 * b.km(anchor, c) : 0.15)}))
           .sort((a, b)=>b.value - a.value).slice(0, 24);
-        const res = b.planDay({date: day.date, window: w, start: hotel, busy, candidates: dayCands, max, buffer: r.bufferMin,
+        const opts = {date: day.date, window: w, start: hotel, busy, candidates: dayCands, max, buffer: r.bufferMin,
           valueAt: (c, s) => {
             let v = 0;
             if(c.outdoor && wx && wx.rain >= r.rainChance) v -= 0.8;
@@ -196,7 +200,21 @@ const TripBrain = (function(){
             if(c.outdoor && s >= 16 * 60 + 30 && (!wx || wx.tmax >= 30)) v += 0.15;                                 // markets and waterfronts: better in the evening
             if(c.category === 'view' && s >= 17 * 60 && s <= 19 * 60) v += 0.2;                                   // towers at sunset
             return v;
-          }});
+          }};
+        let res = b.planDay(opts);
+        // places asked for by name come first: if the day's plan left one out, plan it on its own (it takes the
+        // best open slot - Global Village from 16:00) and fit the rest of the day around it
+        for(const want of wantToday){
+          if(res.stops.some(x=>x.c.id === want.id) || res.stops.some(x=>askedIds.has(x.c.id))) break;
+          const wc = dayCands.find(c=>c.id === want.id) || Object.assign({}, want);
+          const only = b.planDay(Object.assign({}, opts, {candidates: [Object.assign({}, wc, {value: Math.max(wc.value, 0) + 3})], max: 1}));
+          if(!only.stops.length) continue;                      // does not fit today: another day, or the AI
+          const st = only.stops[0];
+          const rest = max > 1 ? b.planDay(Object.assign({}, opts, {busy: busy.concat([{s: st.s, e: st.e, title: want.name, lat: want.lat, lng: want.lng}]).sort((x, y)=>x.s - y.s),
+            candidates: dayCands.filter(c=>c.id !== want.id && !askedIds.has(c.id)), max: max - 1})) : {stops: []};
+          res = Object.assign({}, res, {stops: [st].concat(rest.stops).sort((x, y)=>x.s - y.s)});
+          break;
+        }
         stops = res.stops;
       }
       stops.forEach(x=>used.add(norm(x.c.name).split(' ').slice(0, 3).join(' ')));
