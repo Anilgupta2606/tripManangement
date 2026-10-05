@@ -556,3 +556,15 @@ label.tick span{ overflow-wrap: anywhere; }
 .read-checks li.fixed{ color: var(--good); }
 .read-checks li.warn{ color: var(--warn); }
 .read-checks li.error{ color: var(--bad); font-weight: 600; }
+
+/* PIN lock: documents and photos stay blurred until the PIN is typed */
+body.pin-locked .doc-thumb img, body.pin-locked .mem-photos img{ filter: blur(14px); transform: scale(1.08); cursor: pointer; }
+body.pin-locked .doc-thumb{ overflow: hidden; }
+.pinpad{ position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(10px); padding: 16px; }
+.pin-card{ background: var(--surface); border: 1px solid var(--border); color: var(--ink); border-radius: 16px; padding: 22px; width: min(320px, 100%); display: grid; gap: 8px; justify-items: center; text-align: center; box-shadow: var(--shadow); }
+.pin-ic{ font-size: 30px; }
+.pin-card input{ font-size: 26px; letter-spacing: 10px; text-align: center; width: 100%; padding: 10px; border-radius: 10px; }
+.pin-card .row{ display: flex; gap: 8px; justify-content: center; width: 100%; }
+.pin-msg{ color: var(--bad); min-height: 1.2em; }
+.pin-card.shake{ animation: pinshake .35s; }
+@keyframes pinshake{ 25%{ transform: translateX(-8px); } 50%{ transform: translateX(8px); } 75%{ transform: translateX(-4px); } }

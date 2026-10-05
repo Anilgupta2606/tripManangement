@@ -197,7 +197,7 @@ const Rules = (function(){
         const out = Math.min(toMin(r.checkOutTime), leave);
         items.push(it(toTime(out - 20), toTime(out), 'Check out', 'hotel', {place: hotelName}));
         items.push(it(toTime(leave), toTime(dep - need), 'Transfer to the airport', 'transit', {place: departure.from}));
-        items.push(it(toTime(dep), toTime(toMin(departure.arr) || dep + 60), `${departure.flight} to ${departure.to}`, 'flight', {place: departure.from, locked: true}));
+        items.push(it(toTime(dep), toTime(toMin(departure.arr) || dep + 60), `${departure.flight}${departure.to ? ' to ' + departure.to : ''}`, 'flight', {place: departure.from, locked: true}));
         until = Math.min(until, leave - r.bufferMin);
       } else if(i === n && !departure){
         items.push(it(toTime(toMin(r.checkOutTime) - 20), r.checkOutTime, 'Check out', 'hotel', {place: hotelName}));

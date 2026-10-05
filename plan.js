@@ -397,6 +397,23 @@ async function brainPlan(trip, c, what){
    else the AI is asked. What it understood is also learned for next time. */
 async function askChange(trip, c, text){
   const key = planKey(trip.id, c.city), plan = S.plans[key];
+  // A plan the AI made is changed by the AI. Before, a request the app understood itself re-planned everything with
+  // the app's own planner, so asking "day 2 is too packed" of an AI plan threw it away for a different one. What the
+  // app understood (diet, pace, a meeting, a free evening) is still kept in the rules, so the AI has to follow it.
+  const byAI = plan && plan.by && !/Trip Vault planner/.test(plan.by);
+  if(byAI && Cloud.aiAvailable()){
+    if(BRAIN){
+      const r = TripBrain.apply(text, c, plan.days);
+      if(r.understood){
+        S.settings.rules = Object.assign({}, S.settings.rules || {}, r.rules);
+        c = Object.assign({}, c, {rules: Object.assign({}, r.rules, {custom: (c.rules || {}).custom})});
+        r.fixed.forEach(f=>{ const d = plan.days.find(x=>x.date === f.date); if(d) d.items.push(f.item); });
+        r.free.forEach(f=>{ (f.date ? plan.days.filter(x=>x.date === f.date) : plan.days).forEach(d=>d.items.push(TripBrain.freeBlock(f.part))); });
+        save({quiet: true});
+      }
+    }
+    return aiPlan(trip, c, text, $('p-send'));
+  }
   if(BRAIN){
     const r = TripBrain.apply(text, c, plan ? plan.days : []);
     if(r.understood){

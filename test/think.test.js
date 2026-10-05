@@ -110,3 +110,15 @@ test('an unread request: the AI translates it, bad parts are dropped, and the wo
   assert.deepEqual(MoneyBrain.understand(text, {app: 'trip'}).map(a=>a.do + ':' + (a.category || a.value)), ['like:museum', 'pace:relaxed']);
   assert.deepEqual(MoneyBrain.understand('We fancy a bit of culture, and nothing too sweaty!', {app: 'trip'}).map(a=>a.do), ['like', 'pace'], 'the same words, other punctuation');
 });
+
+test('vegetarian: never a meat place, and the vegetarian ones come back before anything else', {skip: !have && 'brain.js not found next to this repo'}, ()=>{
+  const veg = Object.assign({}, ctx, {rules: {food: 'vegetarian'}});
+  const r = TripBrain.plan(veg, know, weather, null);
+  const meals = r.days.flatMap(d=>d.items.filter(i=>i.kind === 'meal' && / — /.test(i.title)).map(i=>i.title.split(' — ')[1]));
+  assert.ok(meals.length >= 4, meals.join(', '));
+  assert.ok(!meals.some(m=>/Kabab/.test(m)), 'a kebab house for a vegetarian: ' + meals.join(', '));
+  const vegPlaces = meals.filter(m=>/Saravana|Puranmal/.test(m)).length;
+  assert.ok(vegPlaces >= meals.length / 2, 'mostly vegetarian places: ' + meals.join(', '));
+  const last = r.days[r.days.length - 1].items.find(i=>i.kind === 'flight');
+  assert.ok(!/undefined/.test(last.title), last.title);
+});

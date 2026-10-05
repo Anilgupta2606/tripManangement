@@ -479,6 +479,7 @@ let viewSet = [];
 async function openViewer(id, set){
   const d = S.docs.find(x=>x.id === id);
   if(!d) return;
+  if(!(await PinLock.ensure())) return;
   viewSet = (set || [id]).filter(x=>S.docs.some(y=>y.id === x));
   const at = viewSet.indexOf(id), many = viewSet.length > 1;
   const v = $('viewer');
@@ -640,6 +641,7 @@ function memCard(m){
     <button class="icon-btn small mem-del" data-del-mem="${esc(m.id)}" aria-label="Delete memory">${icon('trash')}</button></article>`;
 }
 async function openPhoto(memId, i){
+  if(!(await PinLock.ensure())) return;
   const m = S.memories.find(x=>x.id === memId), p = m.photos[i];
   const v = $('viewer');
   v.hidden = false; document.body.classList.add('noscroll');

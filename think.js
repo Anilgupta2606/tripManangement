@@ -115,6 +115,8 @@ const TripBrain = (function(){
     return ((know && know.guide ? know.guide.listings : [])).filter(l=>l.kind === 'eat' || l.kind === 'drink' && /cafe|coffee|tea/i.test(l.name + l.note))
       .map(l=>({name: l.name, lat: l.lat, lng: l.lng, note: l.note || '', price: l.price || '', area: l.area || '', hours: B().parseHours(l.hours),
         veg: /\b(veg|vegetarian|vegan|jain|saravana|sangeetha|udupi|dosa|thali|south indian)\b/i.test(l.name + ' ' + l.note) && !/non[- ]?veg/i.test(l.note)}))
+      // a vegetarian never gets a place built on meat; other places stay, with "ask for vegetarian dishes"
+      .filter(e=>!veg || e.veg || !/\b(kebab|kabab|kabob|steak|grill|bbq|barbe?cue|shawarma|burger|chicken|mutton|meat|seafood|fish|crab|prawn|lobster|sushi|churrasc|rotisserie|carvery|biryani)\b/i.test(e.name + ' ' + e.note))
       .map(e=>Object.assign(e, {fit: (veg ? (e.veg ? 1 : 0.2) : 1) * (/gelat|ice ?cream|sweets?\b|dessert|bakery|patisserie|lassi|juice|chocolat|pastry|donut|doughnut|bubble tea|station\b/i.test(e.name + ' ' + e.note) ? 0.15 : 1)}));
   }
 
@@ -201,18 +203,22 @@ const TripBrain = (function(){
         prevStop = x;
       });
       // meals: a place to eat near where you are then
+      const ateToday = new Set();
       items.forEach(it=>{
         if(it.kind !== 'meal' || !food.length) return;
         const s = Ru.toMin(it.start);
         const before = stops.filter(x=>x.e <= s).pop();
         const at = before ? before.c : hotel;
-        const pick = food.filter(f=>!ate.has(f.name)).map(f=>{
+        // a place is used once - except that a vegetarian's few vegetarian places come back on another day,
+        // before a non-vegetarian one is chosen (they ran out by day 2 and a kebab house was picked)
+        const veg = /veg|jain|vegan/i.test(prefs.food || '');
+        const pick = food.filter(f=>!ate.has(f.name) || (veg && f.veg && !ateToday.has(f.name))).map(f=>{
           const d = at && f.lat != null && at.lat != null ? b.km(at, f) : 3;
           const open = b.openDuring(f.hours, day.date, s, s + 45);
-          return {f, score: f.fit * 2 - d * 0.4 - (open === false ? 5 : 0), d};
+          return {f, score: f.fit * 2 * (veg && f.veg ? 2 : 1) - d * 0.4 - (open === false ? 5 : 0) - (ate.has(f.name) ? 0.8 : 0), d};
         }).sort((a, b)=>b.score - a.score)[0];
         if(!pick || pick.score < -3) return;
-        ate.add(pick.f.name);
+        ate.add(pick.f.name); ateToday.add(pick.f.name);
         it.title = it.title.replace(/ near the hotel$/, '') + ' — ' + pick.f.name;
         it.place = pick.f.name + ', ' + ctx.city;
         it.notes = [pick.f.note ? pick.f.note.slice(0, 120) : '', pick.d != null && pick.d < 1.5 ? 'a short walk from ' + (before ? before.c.name : 'the hotel') : '',

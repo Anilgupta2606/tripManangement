@@ -398,10 +398,75 @@ function shell(){
   $('trip-pick').onchange = e=>{ if(e.target.value === '__new') { e.target.value = S.settings.lastTrip || ''; VIEWS.newTrip(); } else setTrip(e.target.value); };
   $('modal').addEventListener('click', e=>{ if(e.target.id === 'modal') closeModal(); });
   document.addEventListener('keydown', e=>{ if(e.key === 'Escape'){ if(!$('modal').hidden) closeModal(); else if(!$('viewer').hidden) closeViewer(); } });   // the top one first
+  PinLock.init();
   window.addEventListener('hashchange', ()=>{ if(route() || true) render(); });
   setSyncBadge(Cloud.syncConfig() ? 'ok' : 'off');
 }
 const logo = () => `<svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="var(--brand-bg)"/><path d="M14 40l36-14-36-14 7 14z" fill="var(--brand-fg)"/><path d="M21 26h29" stroke="var(--brand-bg)" stroke-width="3"/><circle cx="46" cy="46" r="6" fill="none" stroke="var(--brand-fg)" stroke-width="3.5"/></svg>`;
+
+/* ---------------------------------------------------------------- PIN lock: documents and photos
+   Nothing a document or photo shows is visible until the 6-digit PIN is typed: thumbnails stay blurred and a
+   viewer asks first. It locks again on leaving the tab (another Trip Vault tab, another browser tab or app, the
+   screen going off) and after 2 minutes without a touch. Only a hash of the PIN is in the code - it is a
+   screen against someone looking at your phone or laptop, not encryption (the files are protected by the device
+   and, when synced, by your sync passphrase). */
+const PinLock = (function(){
+  const HASH = '8d99c1298bafc440361843f1e8e5209017fc06e6caa9c3f7b7859ce424a13790';   // SHA-256 of 'tripvault-pin:' + PIN
+  const IDLE = 2 * 60 * 1000;
+  let open = false, idle = null, fails = 0, waitUntil = 0, asking = null;
+  const hex = async s => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))))
+    .map(b=>b.toString(16).padStart(2, '0')).join('');
+  function set(v){
+    open = v; document.body.classList.toggle('pin-locked', !v);
+    clearTimeout(idle); if(v) idle = setTimeout(lock, IDLE);
+  }
+  function lock(){
+    if(!open) return;
+    set(false);
+    if($('viewer') && !$('viewer').hidden && typeof closeViewer === 'function') closeViewer();
+  }
+  const poke = () => { if(open){ clearTimeout(idle); idle = setTimeout(lock, IDLE); } };
+  function ask(){
+    if(asking) return asking;
+    asking = new Promise(done=>{
+      const el = document.createElement('div');
+      el.className = 'pinpad'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', 'Enter PIN');
+      el.innerHTML = `<div class="pin-card"><div class="pin-ic">🔒</div><b>Enter your PIN</b><span class="muted small">to see documents and photos</span>
+        <input id="pin-in" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" aria-label="6-digit PIN">
+        <span class="pin-msg small" id="pin-msg"></span>
+        <div class="row"><button class="btn ghost" id="pin-no">Cancel</button><button class="btn primary" id="pin-ok">Unlock</button></div></div>`;
+      document.body.appendChild(el);
+      const inp = el.querySelector('#pin-in'), msg = el.querySelector('#pin-msg');
+      const end = ok => { el.remove(); asking = null; done(ok); };
+      const tryIt = async () => {
+        if(Date.now() < waitUntil){ msg.textContent = 'Too many tries - wait ' + Math.ceil((waitUntil - Date.now()) / 1000) + ' s'; return; }
+        const v = inp.value.trim();
+        if(!/^\d{6}$/.test(v)){ msg.textContent = 'Six digits'; return; }
+        if(await hex('tripvault-pin:' + v) === HASH){ fails = 0; set(true); end(true); return; }
+        fails++; inp.value = ''; el.querySelector('.pin-card').classList.remove('shake'); void el.offsetWidth; el.querySelector('.pin-card').classList.add('shake');
+        if(fails >= 5){ waitUntil = Date.now() + 30000; fails = 0; msg.textContent = 'Wrong PIN 5 times - wait 30 s'; }
+        else msg.textContent = 'Wrong PIN';
+      };
+      inp.oninput = () => { inp.value = inp.value.replace(/\D/g, '').slice(0, 6); msg.textContent = ''; if(inp.value.length === 6) tryIt(); };
+      inp.onkeydown = e => { if(e.key === 'Enter') tryIt(); if(e.key === 'Escape') end(false); };
+      el.querySelector('#pin-ok').onclick = tryIt;
+      el.querySelector('#pin-no').onclick = () => end(false);
+      setTimeout(()=>inp.focus(), 30);
+    });
+    return asking;
+  }
+  async function ensure(){ if(open){ poke(); return true; } return ask(); }
+  function init(){
+    set(false);
+    document.addEventListener('visibilitychange', ()=>{ if(document.hidden) lock(); });
+    window.addEventListener('pagehide', lock);
+    window.addEventListener('hashchange', lock);                       // another Trip Vault tab
+    ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(e=>document.addEventListener(e, poke, {capture: true, passive: true}));
+    // a blurred thumbnail asks for the PIN when tapped (the click that opens a viewer asks anyway)
+    document.addEventListener('click', e=>{ if(!open && e.target.closest('.doc-thumb img, .mem-photos img')){ e.preventDefault(); e.stopPropagation(); ensure(); } }, true);
+  }
+  return {ensure, lock, init, isOpen: () => open};
+})();
 
 function render(){
   const trips = S.trips.slice().map(t=>Object.assign({}, t, tripSpan(t))).sort((a, b)=>String(b.start).localeCompare(String(a.start)));
