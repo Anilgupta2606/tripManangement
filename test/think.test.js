@@ -140,3 +140,17 @@ test('a place asked for by name is in the plan; one not found is reported, never
   const goa = TripBrain.plan(Object.assign({}, relaxed, {city: 'Goa', rules: r.rules}), know, weather, null);
   assert.doesNotMatch(goa.summary, /Dubai mall/i);
 });
+
+test('history: each update says what it changed', {skip: !have && 'brain.js not found next to this repo'}, ()=>{
+  const relaxed = Object.assign({}, ctx, {rules: {pace: 'relaxed'}});
+  const before = TripBrain.plan(relaxed, know, weather, null).days;
+  const r = TripBrain.apply('Please include Dubai mall also', relaxed, before);
+  const after = TripBrain.plan(Object.assign({}, relaxed, {rules: r.rules}), know, weather, {days: before}).days;
+  const ch = Rules.diffPlans(before, after);
+  assert.ok(ch.some(c=>/^Added The Dubai Mall — \w{3} \d+ Dec, \d\d:\d\d$/.test(c)), ch.join('\n'));
+  const veg = TripBrain.plan(Object.assign({}, relaxed, {rules: Object.assign({}, r.rules, {food: 'vegetarian'})}), know, weather, {days: after}).days;
+  const ch2 = Rules.diffPlans(after, veg);
+  assert.ok(ch2.some(c=>/^(Lunch|Dinner), \w{3} \d+ Dec: .+ → .+$/.test(c)), ch2.join('\n'));
+  assert.deepEqual(Rules.diffPlans(after, after), []);                              // nothing changed: nothing listed
+  assert.ok(!Rules.diffPlans(before, after).some(c=>/Transfer|Rest at the hotel|6E14/.test(c)), 'filler left out');
+});

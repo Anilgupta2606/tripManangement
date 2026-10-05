@@ -568,3 +568,11 @@ body.pin-locked .doc-thumb{ overflow: hidden; }
 .pin-msg{ color: var(--bad); min-height: 1.2em; }
 .pin-card.shake{ animation: pinshake .35s; }
 @keyframes pinshake{ 25%{ transform: translateX(-8px); } 50%{ transform: translateX(8px); } 75%{ transform: translateX(-4px); } }
+
+/* the plan's history: what each request changed */
+.history .changes{ margin: 4px 0 8px 14px; padding: 0; list-style: none; }
+.history .changes li{ padding-left: 16px; position: relative; }
+.history .changes li::before{ position: absolute; left: 0; font-weight: 700; }
+.history .changes li.add::before{ content: '+'; color: var(--good); }
+.history .changes li.del::before{ content: '−'; color: var(--bad); }
+.history .changes li.mv::before{ content: '↔'; color: var(--accent); }

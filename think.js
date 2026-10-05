@@ -179,9 +179,13 @@ const TripBrain = (function(){
         const pool = left.filter(c=>!(arrivalDay || lastDay) || c.km == null || c.km < 4);
         // the day's anchor: the best-known must-see not yet planned (open that day); else the best place left
         const openThatDay = c => { const h = c.hours && c.hours.days[new Date(day.date + 'T00:00:00Z').getUTCDay()]; return !h || h.length > 0; };
+        // a re-plan keeps each day close to the plan you have: its places stay unless a request needs them to move
+        const was = new Set(((prev && prev.days || []).find(d=>d.date === day.date) || {items: []}).items.map(i=>norm(i.title)));
+        const kept = c => was.has(norm(c.name));
         const anchor = pool.filter(c=>askedIds.has(c.id) && openThatDay(c))[0]
+          || pool.filter(c=>kept(c) && openThatDay(c)).sort((a, b)=>views(b) - views(a))[0]
           || pool.filter(c=>mustIds.has(c.id) && openThatDay(c)).sort((a, b)=>views(b) - views(a))[0] || pool.slice().sort((a, b)=>b.value - a.value)[0];
-        const dayCands = pool.map(c=>Object.assign({}, c, {value: c.value + (askedIds.has(c.id) ? 1.5 : 0) + (mustIds.has(c.id) ? 0.6 : 0) + (anchor && c.id === anchor.id ? 0.5 : 0)
+        const dayCands = pool.map(c=>Object.assign({}, c, {value: c.value + (askedIds.has(c.id) ? 1.5 : 0) + (kept(c) ? 1.0 : 0) + (mustIds.has(c.id) ? 0.6 : 0) + (anchor && c.id === anchor.id ? 0.5 : 0)
             - (anchor && c.lat != null && anchor.lat != null ? 0.07 * b.km(anchor, c) : 0.15)}))
           .sort((a, b)=>b.value - a.value).slice(0, 24);
         const res = b.planDay({date: day.date, window: w, start: hotel, busy, candidates: dayCands, max, buffer: r.bufferMin,

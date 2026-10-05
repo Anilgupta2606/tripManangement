@@ -475,6 +475,32 @@ const Rules = (function(){
     return out;
   }
 
-  return {DEFAULTS, KINDS, merge, asPrompt, check, skeleton, clean, repair, fill, windowOf, tripAnchors, toMin, toTime, addDays, daysBetween, DOC_RULES, WHEN, applies, checklist};
+  /* What an update changed, in plain lines: places added, removed or moved, and meals that changed place.
+     Transfers, rest at the hotel and flights are left out - they follow from the rest. */
+  function diffPlans(oldDays, newDays){
+    const day = d => { try{ return new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', {weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC'}); }catch(e){ return d; } };
+    const nm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const meal = t => (/breakfast/i.test(t) ? 'Breakfast' : /lunch/i.test(t) ? 'Lunch' : /dinner/i.test(t) ? 'Dinner' : 'Meal');
+    const place = t => (String(t).split(' — ')[1] || 'no place named');
+    const index = days => { const places = new Map(), meals = new Map();
+      (days || []).forEach(d=>(d.items || []).forEach(i=>{
+        if(['transit', 'flight', 'hotel', 'rest'].indexOf(i.kind) >= 0) return;
+        if(i.kind === 'meal') meals.set(d.date + '|' + meal(i.title), i);
+        else if(!places.has(nm(i.title))) places.set(nm(i.title), {it: i, date: d.date});
+      }));
+      return {places, meals}; };
+    const A = index(oldDays), B = index(newDays), out = [];
+    B.places.forEach((v, k)=>{ const was = A.places.get(k);
+      if(!was) out.push('Added ' + v.it.title + ' — ' + day(v.date) + (v.it.start ? ', ' + v.it.start : ''));
+      else if(was.date !== v.date || was.it.start !== v.it.start) out.push('Moved ' + v.it.title + ' — ' + day(was.date) + ' ' + (was.it.start || '') + ' → ' + day(v.date) + ' ' + (v.it.start || '')); });
+    A.places.forEach((v, k)=>{ if(!B.places.has(k)) out.push('Removed ' + v.it.title + ' — ' + day(v.date)); });
+    B.meals.forEach((v, k)=>{ const was = A.meals.get(k), [d, m] = k.split('|');
+      if(was && place(was.title) !== place(v.title)) out.push(m + ', ' + day(d) + ': ' + place(was.title) + ' → ' + place(v.title));
+      else if(!was) out.push('Added ' + m.toLowerCase() + ' — ' + day(d) + (place(v.title) !== 'no place named' ? ' at ' + place(v.title) : '')); });
+    A.meals.forEach((v, k)=>{ if(!B.meals.has(k)){ const [d, m] = k.split('|'); out.push('Removed ' + m.toLowerCase() + ' — ' + day(d)); } });
+    return out;
+  }
+
+  return {DEFAULTS, KINDS, merge, asPrompt, check, skeleton, clean, repair, fill, windowOf, tripAnchors, toMin, toTime, addDays, daysBetween, DOC_RULES, WHEN, applies, checklist, diffPlans};
 })();
 if(typeof module !== 'undefined') module.exports = Rules;

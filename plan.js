@@ -89,7 +89,8 @@ VIEWS.plan = function(main, cur){
     <div class="row"><button class="btn primary" id="p-send" ${Cloud.aiAvailable() || BRAIN ? '' : 'disabled'}>Update the plan</button><span class="muted small">${plan.by ? 'Last planned by ' + esc(plan.by) : ''}</span></div>
     ${(plan.used || []).length ? `<p class="muted small">Planned with: ${esc(plan.used.join(' · '))}.</p>` : ''}
     ${(plan.sources || []).length ? `<details><summary class="small">Sources the AI used (${plan.sources.length})</summary><ul class="history small">${plan.sources.map(x=>`<li><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a></li>`).join('')}</ul></details>` : ''}
-    ${(plan.history || []).length ? `<details><summary class="small">What was asked before (${plan.history.length})</summary><ul class="history small">${plan.history.slice().reverse().map(h=>`<li><span class="muted">${esc(ago(h.at))}</span> ${esc(h.text)}</li>`).join('')}</ul></details>` : ''}
+    ${(plan.history || []).length ? `<details><summary class="small">What was asked before, and what it changed (${plan.history.length})</summary><ul class="history small">${plan.history.slice().reverse().map(h=>`<li><span class="muted">${esc(ago(h.at))}</span> ${esc(h.text)}${h.by ? ` <span class="muted">· ${esc(h.by)}</span>` : ''}
+      ${h.changes ? (h.changes.length ? `<ul class="changes">${h.changes.map(c=>`<li class="${/^Added/.test(c) ? 'add' : /^Removed/.test(c) ? 'del' : 'mv'}">${esc(c)}</li>`).join('')}${h.more ? `<li class="muted">… and ${h.more} more</li>` : ''}</ul>` : '<div class="muted">Nothing in the plan changed.</div>') : ''}</li>`).join('')}</ul></details>` : ''}
   </section>` : `<section class="card"><p class="muted">No plan for ${esc(planState.city || 'this city')} yet. <b>Plan with AI</b> builds every day around your flights and hotel, following the rules; <b>Lay out the days</b> puts in only the fixed parts (flights, transfers, check-in/out, meals) for you to fill.</p></section>`}`;
 
   // setup
@@ -145,7 +146,9 @@ function storePlan(trip, c, days, by, what, extra){
   if(p.days) p.versions = (p.versions || []).concat([{at: Date.now(), days: p.days}]).slice(-15);
   p.fixes = (extra && extra.fixes) || [];
   Object.assign(p, {city: c.city, country: c.country, start: c.start, end: c.end, hotel: c.hotel, days, by}, extra || {sources: [], used: []});
-  if(what) p.history = (p.history || []).concat([{at: Date.now(), text: what}]).slice(-30);
+  // each request keeps what it changed (places added, removed or moved; meals that changed place)
+  const changed = p.days ? Rules.diffPlans(p.days, days) : [];
+  if(what) p.history = (p.history || []).concat([{at: Date.now(), text: what, by, changes: changed.slice(0, 60), more: Math.max(0, changed.length - 60)}]).slice(-30);
   S.plans[key] = touch(p);
   save(); render();
 }
