@@ -122,3 +122,21 @@ test('vegetarian: never a meat place, and the vegetarian ones come back before a
   const last = r.days[r.days.length - 1].items.find(i=>i.kind === 'flight');
   assert.ok(!/undefined/.test(last.title), last.title);
 });
+
+test('a place asked for by name is in the plan; one not found is reported, never silently dropped', {skip: !have && 'brain.js not found next to this repo'}, ()=>{
+  const relaxed = Object.assign({}, ctx, {rules: {pace: 'relaxed'}});
+  const has = (days, name) => days.some(d=>d.items.some(i=>i.title === name));
+  const before = TripBrain.plan(relaxed, know, weather, null);
+  assert.ok(!has(before.days, 'The Dubai Mall'), 'the case to fix: a relaxed plan without the mall');
+  const r = TripBrain.apply('Please include Dubai mall also', relaxed, before.days);
+  assert.deepEqual(r.said, ['Must include: Dubai mall']);                       // not "More malls"
+  const after = TripBrain.plan(Object.assign({}, relaxed, {rules: r.rules}), know, weather, {days: before.days});
+  assert.ok(has(after.days, 'The Dubai Mall'), after.days.map(d=>d.items.map(i=>i.title).join(', ')).join(' | '));
+  assert.match(after.summary, /included as you asked: The Dubai Mall/);
+  const r2 = TripBrain.apply('add Atlantis Aquaventure', relaxed, after.days);
+  const after2 = TripBrain.plan(Object.assign({}, relaxed, {rules: r2.rules}), know, weather, {days: after.days});
+  assert.match(after2.summary, /not found in the travel guide: Atlantis Aquaventure/);
+  // per city: Dubai's request does not follow the traveller to another city
+  const goa = TripBrain.plan(Object.assign({}, relaxed, {city: 'Goa', rules: r.rules}), know, weather, null);
+  assert.doesNotMatch(goa.summary, /Dubai mall/i);
+});

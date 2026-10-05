@@ -62,6 +62,8 @@ const Rules = (function(){
       `11. Budget is ${r.budget}; getting around by ${r.transport}.${r.travellers ? ' Travellers: ' + r.travellers + ' — plan for them (walking, stairs, rests, kid- or elder-friendly).' : ''}${r.interests ? ' Interests: ' + r.interests + '.' : ''}${r.avoid ? ' Avoid: ' + r.avoid + '.' : ''}`,
       `12. Items marked "locked": true were set by the traveller — keep them exactly (time, place, title) and plan around them.`,
     ];
+    const inc = Object.entries(r.include || {}).filter(([, v])=>v && v.length);
+    if(inc.length) lines.push('The traveller asked for these places by name - include each one (at a time it is open): ' + inc.map(([c, v])=>c + ': ' + v.join(', ')).join('; ') + '.');
     if(r.extra) lines.push('13. Also: ' + r.extra);
     (r.custom || []).forEach((t, i)=>lines.push((r.extra ? 14 : 13) + i + '. ' + t));      // the traveller's own rules
     if(ctx && ctx.issues) lines.push('The traveller\'s latest requests override rules 1–11 where they conflict, but never rule 12.');

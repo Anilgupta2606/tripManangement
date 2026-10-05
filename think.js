@@ -141,6 +141,15 @@ const TripBrain = (function(){
     const views = c => c.views || 0;
     const must = all.filter(c=>c.value > 0 && c.lat != null && (c.km == null || c.km < 35) && views(c) > 2000)
       .sort((a, b)=>views(b) - views(a)).slice(0, Math.min(14, fullDays * 2 + 1));
+    // places you asked for by name (per city): found among the candidates, they come before every other must-see
+    const wanted = ((ctx.rules && ctx.rules.include) || {})[norm(ctx.city || 'any')] || [];
+    const nameMatch = (want, c) => { const a = norm(want), n = norm(c.name); if(!a || !n) return false;
+      if(n === a || n.includes(a) || a.includes(n)) return true;
+      const ws = a.split(' ').filter(x=>x.length > 2 && ['the', 'and'].indexOf(x) < 0);
+      return ws.length > 0 && ws.every(x=>n.split(' ').some(y=>y === x || y.startsWith(x) || x.startsWith(y))); };
+    const askedIds = new Set(), notFound = [];
+    wanted.forEach(wn=>{ const hit = all.filter(c=>nameMatch(wn, c)).sort((a, b)=>views(b) - views(a))[0]; if(hit) askedIds.add(hit.id); else notFound.push(wn); });
+    all.filter(c=>askedIds.has(c.id) && !must.some(m=>m.id === c.id)).forEach(c=>must.unshift(c));
     const mustIds = new Set(must.map(c=>c.id));
     (locked ? locked.days : []).forEach(d=>d.items.forEach(i=>used.add(norm(i.place || i.title).split(' ').slice(0, 3).join(' '))));
     const isUsed = c => used.has(norm(c.name).split(' ').slice(0, 3).join(' '));
@@ -170,8 +179,9 @@ const TripBrain = (function(){
         const pool = left.filter(c=>!(arrivalDay || lastDay) || c.km == null || c.km < 4);
         // the day's anchor: the best-known must-see not yet planned (open that day); else the best place left
         const openThatDay = c => { const h = c.hours && c.hours.days[new Date(day.date + 'T00:00:00Z').getUTCDay()]; return !h || h.length > 0; };
-        const anchor = pool.filter(c=>mustIds.has(c.id) && openThatDay(c)).sort((a, b)=>views(b) - views(a))[0] || pool.slice().sort((a, b)=>b.value - a.value)[0];
-        const dayCands = pool.map(c=>Object.assign({}, c, {value: c.value + (mustIds.has(c.id) ? 0.6 : 0) + (anchor && c.id === anchor.id ? 0.5 : 0)
+        const anchor = pool.filter(c=>askedIds.has(c.id) && openThatDay(c))[0]
+          || pool.filter(c=>mustIds.has(c.id) && openThatDay(c)).sort((a, b)=>views(b) - views(a))[0] || pool.slice().sort((a, b)=>b.value - a.value)[0];
+        const dayCands = pool.map(c=>Object.assign({}, c, {value: c.value + (askedIds.has(c.id) ? 1.5 : 0) + (mustIds.has(c.id) ? 0.6 : 0) + (anchor && c.id === anchor.id ? 0.5 : 0)
             - (anchor && c.lat != null && anchor.lat != null ? 0.07 * b.km(anchor, c) : 0.15)}))
           .sort((a, b)=>b.value - a.value).slice(0, 24);
         const res = b.planDay({date: day.date, window: w, start: hotel, busy, candidates: dayCands, max, buffer: r.bufferMin,
@@ -243,15 +253,45 @@ const TripBrain = (function(){
     const fixedUp = Ru.repair({days}, ctx.rules, Object.assign({}, ctx, {weather}));
     const n = fixedUp.days.reduce((s, d)=>s + d.items.filter(i=>i.by === 'brain').length, 0);
     const used2 = (know ? know.used : []).slice();
-    return {days: fixedUp.days, fixes: fixedUp.changes, summary: n + ' places over ' + days.length + ' days, chosen from ' + all.filter(c=>c.value > 0).length + ' — open when you get there, close together, around your flights, hotel and meals', used: used2, candidates: all.length};
+    // what happened to the places asked for by name
+    const inPlan = new Set(fixedUp.days.flatMap(d=>d.items.map(i=>norm(i.title))));
+    const askedNames = all.filter(c=>askedIds.has(c.id)).map(c=>c.name);
+    const placed = askedNames.filter(nm=>inPlan.has(norm(nm))), unplaced = askedNames.filter(nm=>!inPlan.has(norm(nm)));
+    const askedNote = (placed.length ? ' · included as you asked: ' + placed.join(', ') : '')
+      + (unplaced.length ? ' · could not fit ' + unplaced.join(', ') + ' (closed or no room on the days) - add it by hand' : '')
+      + (notFound.length ? ' · not found in the travel guide: ' + notFound.join(', ') + ' - add it by hand with + Add' : '');
+    return {days: fixedUp.days, fixes: fixedUp.changes, summary: n + ' places over ' + days.length + ' days, chosen from ' + all.filter(c=>c.value > 0).length + ' — open when you get there, close together, around your flights, hotel and meals' + askedNote, used: used2, candidates: all.length, asked: {placed, unplaced, notFound}};
   }
 
   /* "Not happy with it?" typed in plain words -> changes to the rules and lessons, and what to tell you.
      -> {rules (new), fixed: [{date, item}], free: [{date, part}], said: [text], understood: bool} */
+  /* "include the Dubai Mall", "add Burj Khalifa", "I want to visit the Gold Souk" -> the place names asked for.
+     (These used to become a liking for the kind of place - "More malls" - so the place itself could still be left out.) */
+  function placesAsked(text){
+    const out = [];
+    const re = /\b(?:include|add|visit|see|go to|going to|take (?:us|me) to|keep|fit in|squeeze in)\s+(?:the\s+)?([^,.;!?\n]+)/gi;
+    let m;
+    while((m = re.exec(String(text || '')))){
+      let name = m[1].replace(/\b(also|too|as well|please|if possible|in the plan|on (?:day \d+|the \d+\w*)|this trip|on this trip|for sure|definitely)\b/gi, ' ')
+        .replace(/\s+(and|&)\s+/gi, '|').replace(/\s+/g, ' ').trim();
+      name.split('|').map(s=>s.trim()).filter(s=>s.length >= 3 && !/^(a|an|some|more|less|day|beach day|rest|time|break|it|them|that|this)\b/i.test(s)).forEach(s=>out.push(s));
+    }
+    return Array.from(new Set(out));
+  }
+
   function apply(text, ctx, days, given){
     const b = B(), out = {rules: Object.assign({}, ctx.rules || {}), fixed: [], free: [], said: [], understood: false};
     delete out.rules.custom;
-    const acts = given || b.understand(text, {app: 'trip'});
+    const asked = given ? [] : placesAsked(text);
+    if(asked.length){
+      const city = norm(ctx.city || 'any'), inc = Object.assign({}, out.rules.include || {});
+      inc[city] = Array.from(new Set((inc[city] || []).concat(asked)));
+      out.rules.include = inc;
+      out.understood = true;
+      out.said.push('Must include: ' + asked.join(', '));
+    }
+    // a named place is the request - not a liking for its kind ("include Dubai Mall" is not "more malls")
+    const acts = (given || b.understand(text, {app: 'trip'})).filter(a=>!(asked.length && a.do === 'like'));
     const dayOf = ref => {
       if(!ref || !days || !days.length) return null;
       if(ref.day) return (ref.day === -1 ? days[days.length - 1] : days[ref.day - 1]) || null;
