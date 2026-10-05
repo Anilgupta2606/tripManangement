@@ -90,6 +90,7 @@ VIEWS.plan = function(main, cur){
     ${(plan.used || []).length ? `<p class="muted small">Planned with: ${esc(plan.used.join(' · '))}.</p>` : ''}
     ${(plan.sources || []).length ? `<details><summary class="small">Sources the AI used (${plan.sources.length})</summary><ul class="history small">${plan.sources.map(x=>`<li><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a></li>`).join('')}</ul></details>` : ''}
     ${(plan.history || []).length ? `<details><summary class="small">What was asked before, and what it changed (${plan.history.length})</summary><ul class="history small">${plan.history.slice().reverse().map(h=>`<li><span class="muted">${esc(ago(h.at))}</span> ${esc(h.text)}${h.by ? ` <span class="muted">· ${esc(h.by)}</span>` : ''}
+      ${h.why ? `<div class="hist-why">${esc(h.why)}</div>` : ''}
       ${h.changes ? (h.changes.length ? `<ul class="changes">${h.changes.map(c=>`<li class="${/^Added/.test(c) ? 'add' : /^Removed/.test(c) ? 'del' : 'mv'}">${esc(c)}</li>`).join('')}${h.more ? `<li class="muted">… and ${h.more} more</li>` : ''}</ul>` : '<div class="muted">Nothing in the plan changed.</div>') : ''}</li>`).join('')}</ul></details>` : ''}
   </section>` : `<section class="card"><p class="muted">No plan for ${esc(planState.city || 'this city')} yet. <b>Plan with AI</b> builds every day around your flights and hotel, following the rules; <b>Lay out the days</b> puts in only the fixed parts (flights, transfers, check-in/out, meals) for you to fill.</p></section>`}`;
 
@@ -148,7 +149,12 @@ function storePlan(trip, c, days, by, what, extra){
   Object.assign(p, {city: c.city, country: c.country, start: c.start, end: c.end, hotel: c.hotel, days, by}, extra || {sources: [], used: []});
   // each request keeps what it changed (places added, removed or moved; meals that changed place)
   const changed = p.days ? Rules.diffPlans(p.days, days) : [];
-  if(what) p.history = (p.history || []).concat([{at: Date.now(), text: what, by, changes: changed.slice(0, 60), more: Math.max(0, changed.length - 60)}]).slice(-30);
+  // and, for places asked for by name, what became of them - so "nothing changed" never comes without a reason
+  const a = (extra && extra.asked) || {};
+  const why = [(a.placed || []).length ? 'Included as you asked: ' + a.placed.join(', ') : '',
+    (a.unplaced || []).length ? 'Could not fit ' + a.unplaced.join(', ') + ' — closed at the free times, or no room left on the days; add it by hand with + Add' : '',
+    (a.notFound || []).length ? 'Not found on the map or in the travel guide: ' + a.notFound.join(', ') + ' — check the name, or add it by hand with + Add' : ''].filter(Boolean).join(' · ');
+  if(what) p.history = (p.history || []).concat([{at: Date.now(), text: what, by, changes: changed.slice(0, 60), more: Math.max(0, changed.length - 60), why}]).slice(-30);
   S.plans[key] = touch(p);
   save(); render();
 }
@@ -288,6 +294,7 @@ async function aiPlan(trip, c, issue, clicked){
     const say = t => { const e = $('p-status'); if(e) e.textContent = t; if(t) Busy.step(t); };
     say('Reading about ' + c.city + ' on the internet…');
     const know = await Knowledge.gather(c.city, c.country, c.hotel).catch(()=>null);
+    await addAskedPlaces(c, know);
     const used = (know ? know.used : []).slice();
     if(c.weather || LOCAL_WEATHER[key]) used.push('weather forecast');
     let news = '';
@@ -377,6 +384,20 @@ async function aiPlan(trip, c, issue, clicked){
 
 /* ---------------------------------------------------------------- Trip Vault's own planner (think.js on /ai/brain.js) */
 const BRAIN = typeof MoneyBrain !== 'undefined' && typeof TripBrain !== 'undefined';
+/* Places you asked for by name that the travel guide does not list: looked up on OpenStreetMap (where they are, and
+   their opening hours when mapped) and added to what the planner chooses from. */
+async function addAskedPlaces(c, know){
+  if(!know || typeof TripBrain === 'undefined' || !TripBrain.missingAsked) return;
+  for(const name of TripBrain.missingAsked(c, know)){
+    Busy.step('Looking up “' + name + '” on the map…');
+    const l = await Knowledge.lookupPlace(name, c.city, c.country).catch(()=>null);
+    if(!l) continue;
+    if(!know.guide) know.guide = {title: c.city, url: '', advice: {}, listings: []};
+    know.guide.listings.push(l);
+    know.used.push('“' + l.name + '” from OpenStreetMap');
+  }
+}
+
 async function brainPlan(trip, c, what){
   if(planState.busy) return;
   const key = planKey(trip.id, c.city), prev = S.plans[key];
@@ -386,11 +407,12 @@ async function brainPlan(trip, c, what){
     Busy.step('Reading about ' + c.city + ' on the internet (places, opening hours, map positions)…');
     const know = await Knowledge.gather(c.city, c.country, c.hotel).catch(()=>null);
     if(!know || !know.guide || !know.guide.listings.length) Busy.step('The travel guide has little on ' + c.city + ' — using places near the hotel');
+    await addAskedPlaces(c, know);
     Busy.step('Choosing the best places for each day…');
     await new Promise(r=>setTimeout(r, 30));
     const res = TripBrain.plan(c, know, LOCAL_WEATHER[key] || c.weather || {}, prev);
     storePlan(trip, c, res.days, 'Trip Vault planner (no AI)', what || ((prev ? 'Re-planned' : 'Planned') + ': ' + res.summary),
-      {sources: know && know.guide ? [{title: 'Wikivoyage: ' + know.guide.title, url: know.guide.url}] : [], used: res.used, fixes: res.fixes});
+      {sources: know && know.guide ? [{title: 'Wikivoyage: ' + know.guide.title, url: know.guide.url}] : [], used: res.used, fixes: res.fixes, asked: res.asked});
     const left = Rules.check({days: res.days}, c.rules, Object.assign({}, c, {weather: LOCAL_WEATHER[key]})).filter(p=>p.level === 'error').length;
     Busy.done((prev ? 'Re-planned' : 'Planned') + ' in seconds, without AI — ' + res.summary + (left ? ' · ' + left + ' rule break' + (left === 1 ? '' : 's') + ' left' : ' · follows every rule'));
   }catch(e){ Busy.done('Could not plan: ' + e.message, true); }

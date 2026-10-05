@@ -802,5 +802,24 @@ const Knowledge = (function(){
     if(k.nearby.length) out.push('Notable places near ' + (k.hotelLoc ? 'the hotel' : 'the city centre') + ' (km): ' + k.nearby.slice(0, 35).map(p=>p.name + ' ' + p.km).join(', '));
     return out.join('\n\n').slice(0, 9000);
   }
-  return {guide, nearby, gather, forPrompt, fame, attractions};
+  /* A place you asked for by name that the guide does not list (Global Village is not in Dubai's): found on
+     OpenStreetMap, with its opening hours when they are mapped, as a guide listing. Attractions come before a
+     bus stop of the same name. -> listing or null */
+  async function lookupPlace(name, city, country){
+    const q = [name, city, country].filter(Boolean).join(', ');
+    const d = await getJson('https://nominatim.openstreetmap.org/search?format=json&extratags=1&namedetails=1&accept-language=en&limit=6&q=' + encodeURIComponent(q)).catch(()=>null);
+    if(!d || !d.length){                                     // the map search Trip Vault already uses: where it is, without hours
+      const p = await Geo.place(q).catch(()=>null);
+      return p ? {kind: 'see', name: name.replace(/\b\w/g, c=>c.toUpperCase()), lat: p.lat, lng: p.lng, hours: '', area: '', price: '',
+        note: 'Added because you asked for it (opening hours not known - check before going).', asked: true} : null;
+    }
+    const good = {tourism: 3, leisure: 3, amenity: 2, historic: 3, shop: 2, building: 1, natural: 2};
+    const best = (d || []).filter(r=>good[r.class]).sort((a, b)=>(good[b.class] - good[a.class]) || ((+b.importance || 0) - (+a.importance || 0)))[0] || (d || [])[0];
+    if(!best) return null;
+    const nm = (best.namedetails && (best.namedetails['name:en'] || best.namedetails.name)) || name;
+    const hours = (best.extratags && best.extratags.opening_hours) || '';
+    return {kind: ['shop', 'amenity'].indexOf(best.class) >= 0 && best.class === 'shop' ? 'buy' : 'see', name: /[^\x00-\x7F]/.test(nm) ? name.replace(/\b\w/g, c=>c.toUpperCase()) : nm,
+      lat: +best.lat, lng: +best.lon, hours, area: '', price: '', note: 'Added because you asked for it (from OpenStreetMap' + (hours ? ', with its opening hours' : '; opening hours not mapped - check before going') + ').', asked: true};
+  }
+  return {guide, nearby, gather, forPrompt, fame, attractions, lookupPlace};
 })();

@@ -154,3 +154,19 @@ test('history: each update says what it changed', {skip: !have && 'brain.js not 
   assert.deepEqual(Rules.diffPlans(after, after), []);                              // nothing changed: nothing listed
   assert.ok(!Rules.diffPlans(before, after).some(c=>/Transfer|Rest at the hotel|6E14/.test(c)), 'filler left out');
 });
+
+test('a place the guide lacks: noticed as missing; once looked up it is planned at a time it is open', {skip: !have && 'brain.js not found next to this repo'}, ()=>{
+  const c = Object.assign({}, ctx, {rules: {}});
+  const r = TripBrain.apply('Add global village also', c, []);
+  const asked = Object.assign({}, c, {rules: r.rules});
+  assert.deepEqual(TripBrain.missingAsked(asked, know), ['global village']);
+  // as Knowledge.lookupPlace returns it: an unknown (no Wikipedia readers) place, evenings only
+  const k2 = JSON.parse(JSON.stringify(know));
+  k2.guide.listings.push({kind: 'see', name: 'Global Village', lat: 25.068, lng: 55.307, hours: 'Su-We 16:00-00:00; Th-Sa 16:00-01:00', area: '', price: '', note: 'Added because you asked for it.', asked: true});
+  assert.deepEqual(TripBrain.missingAsked(asked, k2), []);
+  const res = TripBrain.plan(asked, k2, weather, null);
+  const gv = res.days.flatMap(d=>d.items).find(i=>i.title === 'Global Village');
+  assert.ok(gv, res.summary);
+  assert.ok(Rules.toMin(gv.start) >= 16 * 60, 'planned before it opens: ' + gv.start);
+  assert.match(res.summary, /included as you asked: Global Village/);
+});

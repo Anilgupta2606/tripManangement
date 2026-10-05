@@ -174,7 +174,7 @@ const TripBrain = (function(){
       let stops = [];
       if(max > 0){
         // one area a day: the best place left anchors the day, the rest are valued by how close they are to it
-        const left = all.filter(c=>!isUsed(c) && c.value > 0 && (c.km == null || c.km < 35));
+        const left = all.filter(c=>!isUsed(c) && (c.value > 0 || askedIds.has(c.id)) && (c.km == null || c.km < 35));
         const arrivalDay = ctx.arrival && ctx.arrival.date === day.date, lastDay = ctx.departure && ctx.departure.date === day.date;
         const pool = left.filter(c=>!(arrivalDay || lastDay) || c.km == null || c.km < 4);
         // the day's anchor: the best-known must-see not yet planned (open that day); else the best place left
@@ -283,6 +283,14 @@ const TripBrain = (function(){
     return Array.from(new Set(out));
   }
 
+  /* The places asked for by name in this city that the gathered knowledge does not have (to look up). */
+  function missingAsked(ctx, know){
+    const wanted = ((ctx.rules && ctx.rules.include) || {})[norm(ctx.city || 'any')] || [];
+    const names = [].concat(((know && know.guide && know.guide.listings) || []).map(l=>l.name), ((know && know.nearby) || []).map(p=>p.name), ((know && know.attractions) || []).map(a=>a.name));
+    const has = w => { const a = norm(w); return names.some(n0=>{ const n = norm(n0); return n === a || n.includes(a) || a.includes(n) && n.length > 3; }); };
+    return wanted.filter(w=>!has(w));
+  }
+
   function apply(text, ctx, days, given){
     const b = B(), out = {rules: Object.assign({}, ctx.rules || {}), fixed: [], free: [], said: [], understood: false};
     delete out.rules.custom;
@@ -381,6 +389,6 @@ Day N counts from 1 (-1 = the last day); D is the day of the month. If the reque
     return {acts, by: r.provider};
   }
 
-  return {preferences, candidates, eateries, plan, apply, freeBlock, learnFromEdit, ampm, translate, checkActions};
+  return {preferences, candidates, eateries, plan, apply, freeBlock, learnFromEdit, ampm, translate, checkActions, missingAsked};
 })();
 if(typeof module !== 'undefined') module.exports = TripBrain;

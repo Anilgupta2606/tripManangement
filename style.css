@@ -576,3 +576,4 @@ body.pin-locked .doc-thumb{ overflow: hidden; }
 .history .changes li.add::before{ content: '+'; color: var(--good); }
 .history .changes li.del::before{ content: '−'; color: var(--bad); }
 .history .changes li.mv::before{ content: '↔'; color: var(--accent); }
+.history .hist-why{ margin: 3px 0 2px 14px; color: var(--accent-ink, var(--ink)); font-weight: 600; }
