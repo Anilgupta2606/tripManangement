@@ -144,14 +144,20 @@ function readSetup(ctx){
 function storePlan(trip, c, days, by, what, extra){
   const key = planKey(trip.id, c.city);
   const p = S.plans[key] || {tripId: trip.id, city: c.city, history: [], versions: []};
+  const old = p.days;              // kept before it is replaced: the history compares the new plan with this one
   if(p.days) p.versions = (p.versions || []).concat([{at: Date.now(), days: p.days}]).slice(-15);
   p.fixes = (extra && extra.fixes) || [];
   Object.assign(p, {city: c.city, country: c.country, start: c.start, end: c.end, hotel: c.hotel, days, by}, extra || {sources: [], used: []});
   // each request keeps what it changed (places added, removed or moved; meals that changed place)
-  const changed = p.days ? Rules.diffPlans(p.days, days) : [];
+  const changed = old ? Rules.diffPlans(old, days) : [];
   // and, for places asked for by name, what became of them - so "nothing changed" never comes without a reason
   const a = (extra && extra.asked) || {};
-  const why = [(a.placed || []).length ? 'Included as you asked: ' + a.placed.join(', ') : '',
+  // a place that was in the plan already: say where, so "nothing changed" makes sense
+  const nm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const where = name => { for(const d of (old || [])){ const it = d.items.find(i=>nm(i.title) === nm(name)); if(it) return fmtDate(d.date, true) + (it.start ? ', ' + it.start : ''); } return null; };
+  const already = (a.placed || []).filter(where), added = (a.placed || []).filter(x=>!where(x));
+  const why = [added.length ? 'Included as you asked: ' + added.join(', ') : '',
+    already.length ? 'Already in your plan: ' + already.map(x=>x + ' — ' + where(x)).join('; ') : '',
     (a.unplaced || []).length ? 'Could not fit ' + a.unplaced.join(', ') + ' — closed at the free times, or no room left on the days; add it by hand with + Add' : '',
     (a.notFound || []).length ? 'Not found on the map or in the travel guide: ' + a.notFound.join(', ') + ' — check the name, or add it by hand with + Add' : ''].filter(Boolean).join(' · ');
   if(what) p.history = (p.history || []).concat([{at: Date.now(), text: what, by, changes: changed.slice(0, 60), more: Math.max(0, changed.length - 60), why}]).slice(-30);
