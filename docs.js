@@ -169,7 +169,7 @@ VIEWS.docs = function(main, cur){
   keepQueueEdits();                                    // the review cards' unsaved edits, before the page is drawn again
   const kind = docFilter.kind;                         // travel | personal | all
   const tripSel = docFilter.trip === 'current' ? (cur ? cur.id : '') : docFilter.trip;
-  let list = S.docs.filter(d=>(kind === 'personal' ? !Parse.isTravel(d.type) : (Parse.isTravel(d.type) || d.tripId))
+  let list = S.docs.filter(d=>(kind === 'personal' ? !Parse.isTripDoc(d) : Parse.isTripDoc(d))
     && (kind === 'personal' || !tripSel || (tripSel === 'none' ? !d.tripId : d.tripId === tripSel))
     && (!docFilter.person || d.person === docFilter.person) && (!docFilter.type || d.type === docFilter.type));
   if(docFilter.q){ const q = docFilter.q.toLowerCase(); list = list.filter(d=>(d.title + ' ' + d.person + ' ' + typeLabel(d.type) + ' ' + JSON.stringify(d.fields) + ' ' + (d.fileName || '')).toLowerCase().indexOf(q) >= 0); }
@@ -179,7 +179,7 @@ VIEWS.docs = function(main, cur){
   const soon = Rules.addDays(todayISO(), 90);
   const renew = S.docs.filter(d=>d.fields && d.fields.validUntil && d.fields.validUntil <= soon).sort((a, b)=>a.fields.validUntil.localeCompare(b.fields.validUntil));
   const byGroup = kind === 'travel' ? null : Parse.GROUPS.map(g=>({g, docs: list.filter(d=>groupOf(d.type).id === g.id)})).filter(x=>x.docs.length);
-  const nTrip = S.docs.filter(d=>Parse.isTravel(d.type) || d.tripId).length, nMine = S.docs.filter(d=>!Parse.isTravel(d.type)).length;
+  const nTrip = S.docs.filter(d=>Parse.isTripDoc(d)).length, nMine = S.docs.filter(d=>!Parse.isTripDoc(d)).length;
   main.innerHTML = `
   <section class="section-head"><h1>${kind === 'personal' ? 'Personal documents' : 'Trip documents'}</h1></section>
   <nav class="subtabs-bar" role="tablist" aria-label="Which documents">

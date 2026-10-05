@@ -198,6 +198,10 @@ const Parse = (function(){
     {id: 'other', label: 'Other', types: ['other']},
   ];
   const isTravel = t => TRAVEL_TYPES.indexOf(t) >= 0;
+  /* A trip's own document: a travel one, or a passport, travel insurance or unsorted one attached to that trip.
+     Aadhaar, PAN, bank, tax, medical, property and the rest are personal even when attached to a trip - they used to
+     show among a trip's tickets. */
+  const isTripDoc = d => !!d && (isTravel(d.type) || (!!d.tripId && ['passport', 'insurance', 'other'].indexOf(d.type) >= 0));
   /* ID numbers, shown masked in lists: •••• 1234 */
   const mask = (n, type) => { n = String(n || ''); if(!n) return ''; return ['aadhaar', 'pan', 'bank', 'voter-id', 'licence', 'passport'].indexOf(type) >= 0 && n.replace(/\s/g, '').length > 4 ? '•••• ' + n.replace(/\s/g, '').slice(-4) : n; };
   const TYPE_LABEL = Object.fromEntries(TYPES.map(t=>[t.id, t.label]).concat([['other', 'Other']]));
@@ -444,6 +448,6 @@ const Parse = (function(){
   }
 
   return {findDates, findTimes, time24, parseBCBP, julianToDate, findFlights, findAirports, findPNR, findPassengers,
-    flightSegments, hotelFields, trainFields, guessType, read, span, setReference, airport, airline, TYPES, TYPE_LABEL, titleCase, GROUPS, isTravel, mask};
+    flightSegments, hotelFields, trainFields, guessType, read, span, setReference, airport, airline, TYPES, TYPE_LABEL, titleCase, GROUPS, isTravel, isTripDoc, mask};
 })();
 if(typeof module !== 'undefined') module.exports = Parse;

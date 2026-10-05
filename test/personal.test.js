@@ -63,3 +63,14 @@ test('names after a single space; not the father', ()=>{
   const p = Parse.read('INCOME TAX DEPARTMENT\nPermanent Account Number Card\nABCPG1234K\nName: PRIYA GUPTA\nFather\'s Name: SURESH SHARMA', null, {ref: new Date('2026-09-30')});
   assert.deepEqual(p.fields.people, ['Priya Gupta']);
 });
+
+test('a trip shows only its own documents, never personal ones attached to it', ()=>{
+  const t = 'trip1';
+  // travel papers: always trip documents
+  for(const type of ['boarding-pass', 'flight', 'hotel', 'train', 'bus', 'visa', 'car', 'activity']) assert.ok(Parse.isTripDoc({type, tripId: t}), type);
+  // a passport, travel insurance or an unsorted document belongs to the trip it is attached to
+  for(const type of ['passport', 'insurance', 'other']){ assert.ok(Parse.isTripDoc({type, tripId: t}), type); assert.ok(!Parse.isTripDoc({type, tripId: ''}), type + ' with no trip'); }
+  // personal ones stay personal, even attached to a trip (they used to show among its tickets)
+  for(const type of ['aadhaar', 'pan', 'licence', 'voter-id', 'tax', 'bank', 'investment', 'property', 'vehicle', 'medical', 'education', 'employment', 'bill'])
+    assert.ok(!Parse.isTripDoc({type, tripId: t}), type);
+});

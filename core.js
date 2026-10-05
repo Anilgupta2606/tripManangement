@@ -244,7 +244,7 @@ const isInternational = f => { const a = Parse.airport(f.from), b = Parse.airpor
 
 /* ---------------------------------------------------------------- what the documents say, per trip */
 const tripById = id => S.trips.find(t=>t.id === id);
-const docsOf = tripId => S.docs.filter(d=>!tripId || d.tripId === tripId);
+const docsOf = tripId => S.docs.filter(d=>(!tripId || d.tripId === tripId) && Parse.isTripDoc(d));   // a trip's documents: never personal ones
 /* Every flight in a trip, once each: the tickets and boarding passes of everyone on it are gathered together,
    with each traveller (the document's owner and every passenger named on it) and their seat when known. */
 const nameKey = n => String(n || '').toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ');
