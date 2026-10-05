@@ -15,7 +15,8 @@
 const TripBrain = (function(){
   const B = () => (typeof MoneyBrain !== 'undefined' ? MoneyBrain : null);
   const R = () => (typeof Rules !== 'undefined' ? Rules : require('./rules.js'));
-  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  // one place, one name: "Dolmabahçe" is "Dolmabahce" and "The Pantheon" is "Pantheon" (they were planned twice)
+  const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/^the /, '');
   const KIND = {market: 'shopping', mall: 'shopping', fun: 'activity', desert: 'activity', boat: 'activity', animals: 'activity', beach: 'activity'};
   const MINUTES = {museum: 90, mall: 120, market: 75, mosque: 45, temple: 45, church: 40, park: 60, view: 90, fort: 75, animals: 150, fun: 240, beach: 120, desert: 300, boat: 60, sight: 75};
   const OUTDOOR = {market: true, park: true, beach: true, fort: true, desert: true, boat: true, animals: true, view: false, fun: true};
@@ -58,6 +59,20 @@ const TripBrain = (function(){
     return fromGuide;
   }
 
+  /* What kind of place, for a visitor: + for the classics, - for what is popular online but not why people come. */
+  const COMMERCIAL = /\b(theme park|amusement park|water ?park|waterpark|worlds? of|city of wonders|madame tussaud'?s?|wax museum|stadium|arena|autodrome|circuit|raceway|speedway|port of|container|stock exchange|exchange building|retail(er)?|store|outlet|chain|franchise|anime|manga|resort|hotel|casino|dome\b|complex\b|headquarters|cinema|multiplex|ice rink|bowling)\b/i;
+  const HERITAGE = /\b(souk|souq|bazaar|bazar|old town|old city|historic|heritage|quarter|medina|fortress|citadel|cistern|gate|ruins?|unesco|world heritage|neighbourhood|neighborhood)\b/i;
+  function classic(c){
+    const t = c.name + ' ' + (c.desc || '');
+    if(COMMERCIAL.test(t) && !/\b(observation|observatory|museum of|national museum|historic)\b/i.test(c.desc || '')) return -1;
+    let v = 0;
+    if(/temple|mosque|church|museum|fort|market/.test(c.category)) v += 0.35;
+    if(HERITAGE.test(t)) v += 0.3;
+    if(c.category === 'view' || c.category === 'mall') v += 0.2;
+    if(c.category === 'fun') v -= 0.6;
+    return v;
+  }
+
   /* Every place worth considering, with a value and what we know of it. know: from Knowledge.gather */
   function candidates(know, ctx, prefs){
     const b = B(), out = [], seen = {};
@@ -84,13 +99,15 @@ const TripBrain = (function(){
       if(views > 0){ const f = Math.max(-0.1, Math.min(0.9, (Math.log10(views) - 3) * 0.4)); value += f; if(f >= 0.5) why.push('one of the best-known sights here'); }
       if(prefs.cat[category]){ value += prefs.cat[category]; why.push(prefs.why[category]); }
       if(prefs.kids && /animals|fun|beach|park/.test(category)){ value += 0.3; why.push('good with children'); }
+      // popular online but not why people come (a stadium, a theme park, an office tower): a filler, not a first choice
+      else if(COMMERCIAL.test(name + ' ' + desc) && !/\b(observation|observatory|museum of|national museum|historic)\b/i.test(desc)) value -= 0.35;
       if(prefs.lessWalking && /market|park|fort|desert/.test(category)) value -= 0.25;
       if(prefs.avoidWords.some(w=>(name + ' ' + (o.note || '')).toLowerCase().indexOf(w) >= 0)) value = -10;
       if(!pos) value -= 0.2;                                                                  // no map position: we cannot place it well
       const c = {id: 'c' + out.length, name, category, kind: KIND[category] || 'sight', lat: pos ? pos.lat : null, lng: pos ? pos.lng : null,
         minutes: Math.round((MINUTES[category] || 75) * (prefs.lessWalking && /market|park|museum/.test(category) ? 0.8 : 1)), flex: 45,
         hours: b.parseHours(o.hours), hoursText: o.hours || '', outdoor: !!OUTDOOR[category] && !/aquarium|dolphinarium|indoor|museum|mall|cinema|ski dubai/i.test(name), note: o.note || '', area: o.area || '', price: o.price || '',
-        value, why, source: o.source, km: hotel && pos ? b.km(hotel, pos) : null, views: views || 0};
+        value, why, source: o.source, km: hotel && pos ? b.km(hotel, pos) : null, views: views || 0, desc};
       if(c.km != null && c.km > 60) return;                                                    // another city
       if(value >= 1.3) c.flex = 0;                                                              // a top sight gets its full time, never squeezed
       seen[k] = c; out.push(c);
@@ -101,7 +118,8 @@ const TripBrain = (function(){
     listings.forEach(l=>{
       if(l.kind === 'see') add(l.name, Object.assign({base: 1.0, source: 'guide', fame: true}, l));
       else if(l.kind === 'do') add(l.name, Object.assign({base: 0.85, source: 'guide'}, l));
-      else if(l.kind === 'buy' && /market|mall/.test(b.categoryOf(l.name, l.note))) add(l.name, Object.assign({base: 0.6, source: 'guide'}, l));
+      else if(l.kind === 'buy' && /market|mall/.test(b.categoryOf(l.name, l.note)))
+        add(l.name, Object.assign({base: /\b(souk|souq|bazaar|bazar|grand|old|night market|floating market)\b/i.test(l.name) ? 0.85 : 0.6, source: 'guide', fame: true}, l));
     });
     // the city's attractions as Wikipedia files them (with map positions): a place to visit when its description says so
     ((know && know.attractions) || []).forEach(a=>{ add(a.name.replace(/,\s*[A-Z][a-z]+$/, '').replace(/\s*\([^)]*\)$/, ''), {base: 0.55, lat: a.lat, lng: a.lng, source: 'attractions', note: '', key: a.name, cat: a.cat}); });
@@ -139,8 +157,12 @@ const TripBrain = (function(){
     // first, as the anchors of the days, so a famous place is never left out for a lesser one nearer the hotel
     const fullDays = Math.max(1, days.length - (ctx.arrival ? 1 : 0) - (ctx.departure ? 1 : 0));
     const views = c => c.views || 0;
-    const must = all.filter(c=>c.value > 0 && c.lat != null && (c.km == null || c.km < 35) && views(c) > 2000)
-      .sort((a, b)=>views(b) - views(a)).slice(0, Math.min(14, fullDays * 2 + 1));
+    // ranked by readers on a log scale, with what kind of place it is: a temple, palace, souk or old quarter counts
+    // for more; a theme park, wax museum, stadium, race track, port or stock exchange for much less (they topped
+    // the list on web traffic - Dubai's must-sees were IMG Worlds, Falcon City, the Port of Jebel Ali and the Autodrome)
+    const mustRank = c => Math.log10(Math.max(views(c), 1)) + classic(c);
+    const must = all.filter(c=>c.value > 0 && c.lat != null && (c.km == null || c.km < 35) && views(c) > 600 && classic(c) > -0.9)
+      .sort((a, b)=>mustRank(b) - mustRank(a)).slice(0, Math.min(14, fullDays * 2 + 1));
     // places you asked for by name (per city): found among the candidates, they come before every other must-see
     const wanted = ((ctx.rules && ctx.rules.include) || {})[norm(ctx.city || 'any')] || [];
     const nameMatch = (want, c) => { const a = norm(want), n = norm(c.name); if(!a || !n) return false;
@@ -199,6 +221,7 @@ const TripBrain = (function(){
             if(c.outdoor && wx && wx.tmax >= r.heatC && s < 16 * 60 && s + c.minutes > 11 * 60 + 30) v -= 0.9;
             if(c.outdoor && s >= 16 * 60 + 30 && (!wx || wx.tmax >= 30)) v += 0.15;                                 // markets and waterfronts: better in the evening
             if(c.category === 'view' && s >= 17 * 60 && s <= 19 * 60) v += 0.2;                                   // towers at sunset
+            if(s >= 17 * 60 + 30 && /\b(night market|global village|souk|souq|bazaar|fountain|promenade|waterfront|creek|marina|walk|riverfront|boulevard)\b/i.test(c.name)) v += 0.35;   // evening places
             return v;
           }};
         let res = b.planDay(opts);

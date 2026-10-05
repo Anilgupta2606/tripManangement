@@ -667,7 +667,10 @@ const Knowledge = (function(){
       const subs = Array.from(new Set((page.text.match(new RegExp('\\[\\[' + esc + '/[^\\]|#]+', 'g')) || []).map(x=>x.slice(2))));
       const here = String(near || '').toLowerCase();
       subs.sort((a, b)=>(here.indexOf(b.split('/').pop().toLowerCase()) >= 0) - (here.indexOf(a.split('/').pop().toLowerCase()) >= 0));
-      const pages = await Promise.all(subs.slice(0, 14).map(t=>wikivoyage(t).catch(()=>null)));
+      // a big city's sights are on its district pages (Tokyo's Senso-ji is on Taito's): read more of them
+      // four at a time: all at once tripped the guide's rate limit, and then nothing came back at all
+      const pages = [], want = subs.slice(0, 20);
+      for(let i = 0; i < want.length; i += 4) pages.push(...await Promise.all(want.slice(i, i + 4).map(t=>wikivoyage(t).catch(()=>null))));
       pages.forEach(p=>{ if(p) listings = listings.concat(listingsOf(p.text, p.title.split('/').pop(), 70)); });
     }
     // still thin: a region whose places are on its towns' pages ("Goa" -> Panaji, Old Goa, Calangute, Anjuna)
@@ -700,7 +703,7 @@ const Knowledge = (function(){
   }
   /* How well known each place is: its Wikipedia page's readers in the last 30 days (free, no key). -> {lower-case name: views} */
   async function fame(names){
-    const out = {}, list = Array.from(new Set(names.filter(Boolean))).slice(0, 200);
+    const out = {}, list = Array.from(new Set(names.filter(Boolean))).slice(0, 400);
     for(let i = 0; i < list.length; i += 50){
       const part = list.slice(i, i + 50);
       const k = 'f:' + part.join('|');
@@ -773,7 +776,13 @@ const Knowledge = (function(){
     const town = hotelLoc && hotelLoc.city && hotelLoc.city.toLowerCase() !== city.toLowerCase() ? hotelLoc.city : '';
     const near = [hotel && hotel.address, hotel && hotel.name, hotelLoc && hotelLoc.label].filter(Boolean).join(' ');
     const attrP = attractions(city, loc).catch(()=>[]);
-    const [g0, gTown, n] = await Promise.all([guide(city, near).catch(()=>null), town ? guide(town, near).catch(()=>null) : null, loc ? nearby(loc).catch(()=>[]) : []]);
+    let [g0, gTown, n] = await Promise.all([guide(city, near).catch(()=>null), town ? guide(town, near).catch(()=>null) : null, loc ? nearby(loc).catch(()=>[]) : []]);
+    // the guide sometimes does not come back (busy servers): once more, after a pause, before planning without it
+    if(!(g0 && g0.listings.length) && !(gTown && gTown.listings.length)){
+      await new Promise(r=>setTimeout(r, 1500));
+      g0 = await guide(city, near).catch(()=>null);
+      if(town && !(g0 && g0.listings.length)) gTown = await guide(town, near).catch(()=>null);
+    }
     let g = g0;
     if(gTown && gTown.listings.length){
       const seen = new Set();
@@ -783,10 +792,15 @@ const Knowledge = (function(){
     if(g && (g.listings.length || Object.keys(g.advice).length)) used.push('travel guide (' + (g.listings.length ? g.listings.length + ' places' : 'advice') + ')');
     if(n.length) used.push(n.length + ' places near ' + (hotelLoc ? 'the hotel' : 'the centre'));
     // how well known each place is, and what it is: its own Wikipedia page (the guide names it; else the same name)
-    const pairs = ((g && g.listings) || []).filter(l=>l.kind !== 'eat' && l.kind !== 'drink').map(l=>[l.name, l.wiki || l.name]).concat(n.map(p=>[p.name, p.name]));
+    // a name can be another page on Wikipedia ("Grand Bazaar" is a list of bazaars: 55 readers; "Grand Bazaar,
+    // Istanbul" has thousands) - the city-qualified title is asked too, and the larger count kept
+    const pairs = ((g && g.listings) || []).filter(l=>l.kind !== 'eat' && l.kind !== 'drink').flatMap(l=>[[l.name, l.wiki || l.name]].concat(l.wiki ? [] : [[l.name, l.name + ', ' + city]]))
+      .concat(n.map(p=>[p.name, p.name]));
     const fm0 = await fame(pairs.map(p=>p[1])).catch(()=>({}));
     const fm = {}, desc = {};
-    pairs.forEach(([name, title])=>{ const t = title.toLowerCase(); if(fm0[t] !== undefined) fm[name.toLowerCase()] = fm0[t]; if(fm0._desc && fm0._desc[t]) desc[name.toLowerCase()] = fm0._desc[t]; });
+    pairs.forEach(([name, title])=>{ const t = title.toLowerCase(), k = name.toLowerCase();
+      if(fm0[t] !== undefined && fm0[t] > (fm[k] || -1)){ fm[k] = fm0[t]; if(fm0._desc && fm0._desc[t]) desc[k] = fm0._desc[t]; }
+      else if(fm0._desc && fm0._desc[t] && !desc[k]) desc[k] = fm0._desc[t]; });
     if(Object.keys(fm).length) used.push('how well known each place is (Wikipedia readers)');
     const attr = await attrP;
     attr.forEach(a=>{ const key = a.name.toLowerCase(); if(a.views) fm[key] = Math.max(fm[key] || 0, a.views); if(a.desc && !desc[key]) desc[key] = a.desc; });

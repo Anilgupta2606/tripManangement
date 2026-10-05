@@ -411,6 +411,12 @@ async function brainPlan(trip, c, what){
     Busy.step('Choosing the best places for each day…');
     await new Promise(r=>setTimeout(r, 30));
     const res = TripBrain.plan(c, know, LOCAL_WEATHER[key] || c.weather || {}, prev);
+    // nothing could be read about the city (the guide and Wikipedia did not answer): never swap your plan for empty days
+    const placesIn = res.days.reduce((s, d)=>s + d.items.filter(i=>i.by === 'brain').length, 0);
+    if(!placesIn){
+      Busy.done('Could not read about ' + c.city + ' just now (the travel guide did not answer)' + (prev ? ' — your plan is unchanged' : '') + '. Try again in a minute' + (Cloud.aiAvailable() ? ', or use Re-plan with AI' : '') + '.', true);
+      return;
+    }
     storePlan(trip, c, res.days, 'Trip Vault planner (no AI)', what || ((prev ? 'Re-planned' : 'Planned') + ': ' + res.summary),
       {sources: know && know.guide ? [{title: 'Wikivoyage: ' + know.guide.title, url: know.guide.url}] : [], used: res.used, fixes: res.fixes, asked: res.asked});
     const left = Rules.check({days: res.days}, c.rules, Object.assign({}, c, {weather: LOCAL_WEATHER[key]})).filter(p=>p.level === 'error').length;
