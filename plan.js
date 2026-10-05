@@ -91,8 +91,8 @@ VIEWS.plan = function(main, cur){
     ${(plan.sources || []).length ? `<details><summary class="small">Sources the AI used (${plan.sources.length})</summary><ul class="history small">${plan.sources.map(x=>`<li><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a></li>`).join('')}</ul></details>` : ''}
     ${(plan.history || []).length ? `<details><summary class="small">What was asked before, and what it changed (${plan.history.length})</summary><ul class="history small">${plan.history.slice().reverse().map(h=>`<li><span class="muted">${esc(ago(h.at))}</span> ${esc(h.text)}${h.by ? ` <span class="muted">· ${esc(h.by)}</span>` : ''}
       ${h.why ? `<div class="hist-why">${esc(h.why)}</div>` : ''}
-      ${h.explained && h.explained.length ? changeTree(h.explained)
-        : h.changes ? (h.changes.length ? `<ul class="changes">${h.changes.map(c=>`<li class="${/^Added/.test(c) ? 'add' : /^Removed/.test(c) ? 'del' : 'mv'}">${esc(c)}</li>`).join('')}${h.more ? `<li class="muted">… and ${h.more} more</li>` : ''}</ul>` : '<div class="muted">Nothing in the plan changed.</div>') : ''}</li>`).join('')}</ul></details>` : ''}
+      ${(ex=>ex ? (ex.length ? changeTree(ex) : '<div class="muted">Nothing in the plan changed.</div>') : '')(entryChanges(plan, h)) ||
+        (h.changes ? (h.changes.length ? `<ul class="changes">${h.changes.map(c=>`<li class="${/^Added/.test(c) ? 'add' : /^Removed/.test(c) ? 'del' : 'mv'}">${esc(c)}</li>`).join('')}${h.more ? `<li class="muted">… and ${h.more} more</li>` : ''}</ul>` : '<div class="muted">Nothing in the plan changed.</div>') : '')}</li>`).join('')}</ul></details>` : ''}
   </section>` : `<section class="card"><p class="muted">No plan for ${esc(planState.city || 'this city')} yet. <b>Plan with AI</b> builds every day around your flights and hotel, following the rules; <b>Lay out the days</b> puts in only the fixed parts (flights, transfers, check-in/out, meals) for you to fill.</p></section>`}`;
 
   // setup
@@ -142,6 +142,17 @@ function readSetup(ctx){
   if(!c.start || !c.end){ toast('Set the dates first (or upload the tickets and hotel booking).', 'error'); return null; }
   return c;
 }
+/* What an update changed, rebuilt from the plan's saved versions (the one saved with the entry is the plan before
+   it, the next one - or the plan now - the plan after). Entries saved before 5 Oct 2026 compared the new plan with
+   itself and kept "nothing changed"; this shows what really changed. null when the versions are gone (Undo). */
+function entryChanges(plan, h){
+  if(h.explained && h.explained.length) return h.explained;
+  const vs = plan.versions || [];
+  const i = vs.findIndex(v=>Math.abs(v.at - h.at) < 3000);
+  if(i < 0) return h.explained ? h.explained : null;
+  return Rules.explainPlans(vs[i].days, i + 1 < vs.length ? vs[i + 1].days : plan.days).slice(0, 40);
+}
+
 /* A history entry's changes: each new place, with what was removed or moved to fit it underneath, and why. */
 function changeTree(list){
   const row = x => `<li class="${x.type === 'add' ? 'add' : x.type === 'del' ? 'del' : 'mv'}">${esc(x.text)}${x.because ? ` <span class="because">· ${esc(x.because)}</span>` : ''}${(x.sub || []).length ? `<ul class="changes sub">${x.sub.map(row).join('')}</ul>` : ''}</li>`;

@@ -579,3 +579,4 @@ body.pin-locked .doc-thumb{ overflow: hidden; }
 .history .hist-why{ margin: 3px 0 2px 14px; color: var(--accent); font-weight: 600; }   /* --accent-ink is the white text on buttons: it hid this line */
 .history .changes.sub{ margin: 2px 0 4px 6px; }
 .history .because{ color: var(--muted); font-style: italic; }
+.history li{ overflow-wrap: anywhere; }   /* a pasted link no longer runs off the page */

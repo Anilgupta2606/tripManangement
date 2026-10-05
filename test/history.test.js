@@ -48,3 +48,15 @@ test('history explains: what was removed or moved to fit a new place sits under 
   const html = c.changeTree(ex);
   assert.match(html, /Added Creek Park[\s\S]*<ul class="changes sub">[\s\S]*to make room for Creek Park/);
 });
+
+test('an entry saved by the broken version shows its real changes, rebuilt from the saved versions', ()=>{
+  const c = load();
+  const v1 = [day('2026-12-23', [it('15:00', 'Dinosaur Park')])], v2 = [day('2026-12-23', [it('16:15', 'Global Village')])], now = [day('2026-12-23', [it('16:15', 'Global Village'), it('18:40', 'Creek Park')])];
+  const plan = {days: now, versions: [{at: 1000, days: v1}, {at: 5000, days: v2}],
+    history: [{at: 1001, text: 'Add global village', changes: []}, {at: 5002, text: 'add creek park also', changes: []}]};
+  const a = c.entryChanges(plan, plan.history[0]), b = c.entryChanges(plan, plan.history[1]);
+  assert.equal(a[0].text, 'Added Global Village — Wed 23 Dec, 16:15');
+  assert.deepEqual(a[0].sub.map(x=>x.because), ['to make room for Global Village']);
+  assert.deepEqual(b.map(x=>x.text), ['Added Creek Park — Wed 23 Dec, 18:40']);
+  assert.equal(c.entryChanges({days: now, versions: []}, {at: 9, changes: []}), null);   // versions gone (Undo): the old line stays
+});
