@@ -8,7 +8,7 @@ const fs = require('fs'), path = require('path'), vm = require('vm');
 function load(){
   const ctx = {console, Date, JSON, Math, Object, Array, String, Set, Map, Promise, setTimeout,
     Rules: require('../rules.js'), VIEWS: {}, S: {plans: {}, settings: {}}, save(){}, render(){}, touch: x=>x,
-    fmtDate: (d, dow)=>d + (dow ? ' (dow)' : '')};
+    fmtDate: (d, dow)=>d + (dow ? ' (dow)' : ''), esc: s=>String(s == null ? '' : s).replace(/[&<>"]/g, ch=>({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[ch])};
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../plan.js'), 'utf8'), ctx);
   return ctx;
@@ -29,4 +29,22 @@ test('history: an update lists what changed against the plan before it', ()=>{
   const last = c.S.plans['t1|dubai'].history[2];
   assert.deepEqual(last.changes, []);
   assert.equal(last.why, 'Already in your plan: Creek Park — 2026-12-23 (dow), 17:25');
+});
+
+test('history explains: what was removed or moved to fit a new place sits under it, with why', ()=>{
+  const Rules = require('../rules.js');
+  const before = [day('2026-12-23', [it('15:00', 'Dinosaur Park'), it('19:00', 'Dinner — Al Fresco', 'meal')]),
+                  day('2026-12-25', [it('10:20', 'Palm Islands'), it('15:30', 'Lost Chambers')])];
+  const after = [day('2026-12-23', [it('17:25', 'Creek Park'), it('19:00', 'Dinner — Legends Steakhouse', 'meal')]),
+                 day('2026-12-25', [it('10:20', 'Lost Chambers'), it('15:30', 'Palm Islands')])];
+  const ex = Rules.explainPlans(before, after);
+  assert.equal(ex[0].text, 'Added Creek Park — Wed 23 Dec, 17:25');
+  assert.deepEqual(ex[0].sub.map(x=>[x.text, x.because]), [
+    ['Removed Dinosaur Park — Wed 23 Dec', 'to make room for Creek Park'],
+    ['Dinner, Wed 23 Dec: Al Fresco → Legends Steakhouse', 'nearer to Creek Park']]);
+  assert.deepEqual(ex.slice(1).map(x=>x.because), ['order changed on that day', 'order changed on that day']);
+  // and the page shows it nested, with the reasons
+  const c = load();
+  const html = c.changeTree(ex);
+  assert.match(html, /Added Creek Park[\s\S]*<ul class="changes sub">[\s\S]*to make room for Creek Park/);
 });

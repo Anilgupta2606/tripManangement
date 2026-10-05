@@ -91,7 +91,8 @@ VIEWS.plan = function(main, cur){
     ${(plan.sources || []).length ? `<details><summary class="small">Sources the AI used (${plan.sources.length})</summary><ul class="history small">${plan.sources.map(x=>`<li><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a></li>`).join('')}</ul></details>` : ''}
     ${(plan.history || []).length ? `<details><summary class="small">What was asked before, and what it changed (${plan.history.length})</summary><ul class="history small">${plan.history.slice().reverse().map(h=>`<li><span class="muted">${esc(ago(h.at))}</span> ${esc(h.text)}${h.by ? ` <span class="muted">· ${esc(h.by)}</span>` : ''}
       ${h.why ? `<div class="hist-why">${esc(h.why)}</div>` : ''}
-      ${h.changes ? (h.changes.length ? `<ul class="changes">${h.changes.map(c=>`<li class="${/^Added/.test(c) ? 'add' : /^Removed/.test(c) ? 'del' : 'mv'}">${esc(c)}</li>`).join('')}${h.more ? `<li class="muted">… and ${h.more} more</li>` : ''}</ul>` : '<div class="muted">Nothing in the plan changed.</div>') : ''}</li>`).join('')}</ul></details>` : ''}
+      ${h.explained && h.explained.length ? changeTree(h.explained)
+        : h.changes ? (h.changes.length ? `<ul class="changes">${h.changes.map(c=>`<li class="${/^Added/.test(c) ? 'add' : /^Removed/.test(c) ? 'del' : 'mv'}">${esc(c)}</li>`).join('')}${h.more ? `<li class="muted">… and ${h.more} more</li>` : ''}</ul>` : '<div class="muted">Nothing in the plan changed.</div>') : ''}</li>`).join('')}</ul></details>` : ''}
   </section>` : `<section class="card"><p class="muted">No plan for ${esc(planState.city || 'this city')} yet. <b>Plan with AI</b> builds every day around your flights and hotel, following the rules; <b>Lay out the days</b> puts in only the fixed parts (flights, transfers, check-in/out, meals) for you to fill.</p></section>`}`;
 
   // setup
@@ -141,6 +142,12 @@ function readSetup(ctx){
   if(!c.start || !c.end){ toast('Set the dates first (or upload the tickets and hotel booking).', 'error'); return null; }
   return c;
 }
+/* A history entry's changes: each new place, with what was removed or moved to fit it underneath, and why. */
+function changeTree(list){
+  const row = x => `<li class="${x.type === 'add' ? 'add' : x.type === 'del' ? 'del' : 'mv'}">${esc(x.text)}${x.because ? ` <span class="because">· ${esc(x.because)}</span>` : ''}${(x.sub || []).length ? `<ul class="changes sub">${x.sub.map(row).join('')}</ul>` : ''}</li>`;
+  return `<ul class="changes">${list.map(row).join('')}</ul>`;
+}
+
 function storePlan(trip, c, days, by, what, extra){
   const key = planKey(trip.id, c.city);
   const p = S.plans[key] || {tripId: trip.id, city: c.city, history: [], versions: []};
@@ -160,7 +167,9 @@ function storePlan(trip, c, days, by, what, extra){
     already.length ? 'Already in your plan: ' + already.map(x=>x + ' — ' + where(x)).join('; ') : '',
     (a.unplaced || []).length ? 'Could not fit ' + a.unplaced.join(', ') + ' — closed at the free times, or no room left on the days; add it by hand with + Add' : '',
     (a.notFound || []).length ? 'Not found on the map or in the travel guide: ' + a.notFound.join(', ') + ' — check the name, or add it by hand with + Add' : ''].filter(Boolean).join(' · ');
-  if(what) p.history = (p.history || []).concat([{at: Date.now(), text: what, by, changes: changed.slice(0, 60), more: Math.max(0, changed.length - 60), why}]).slice(-30);
+  // the same changes explained: what was removed or moved to fit each new place, under it
+  const explained = old ? Rules.explainPlans(old, days).slice(0, 40) : [];
+  if(what) p.history = (p.history || []).concat([{at: Date.now(), text: what, by, changes: changed.slice(0, 60), more: Math.max(0, changed.length - 60), explained, why}]).slice(-30);
   S.plans[key] = touch(p);
   save(); render();
 }

@@ -577,3 +577,5 @@ body.pin-locked .doc-thumb{ overflow: hidden; }
 .history .changes li.del::before{ content: '−'; color: var(--bad); }
 .history .changes li.mv::before{ content: '↔'; color: var(--accent); }
 .history .hist-why{ margin: 3px 0 2px 14px; color: var(--accent); font-weight: 600; }   /* --accent-ink is the white text on buttons: it hid this line */
+.history .changes.sub{ margin: 2px 0 4px 6px; }
+.history .because{ color: var(--muted); font-style: italic; }

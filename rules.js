@@ -477,9 +477,12 @@ const Rules = (function(){
 
   /* What an update changed, in plain lines: places added, removed or moved, and meals that changed place.
      Transfers, rest at the hotel and flights are left out - they follow from the rest. */
-  function diffPlans(oldDays, newDays){
+  function diffPlans(oldDays, newDays){ return changesOf(oldDays, newDays).map(c=>c.text); }
+
+  /* The changes, each with its days: {type: add|del|mv|meal, title, text, from, to} (from/to: {date, start}). */
+  function changesOf(oldDays, newDays){
     const day = d => { try{ return new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', {weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC'}); }catch(e){ return d; } };
-    const nm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const nm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
     const meal = t => (/breakfast/i.test(t) ? 'Breakfast' : /lunch/i.test(t) ? 'Lunch' : /dinner/i.test(t) ? 'Dinner' : 'Meal');
     const place = t => (String(t).split(' — ')[1] || 'no place named');
     const index = days => { const places = new Map(), meals = new Map();
@@ -491,16 +494,41 @@ const Rules = (function(){
       return {places, meals}; };
     const A = index(oldDays), B = index(newDays), out = [];
     B.places.forEach((v, k)=>{ const was = A.places.get(k);
-      if(!was) out.push('Added ' + v.it.title + ' — ' + day(v.date) + (v.it.start ? ', ' + v.it.start : ''));
-      else if(was.date !== v.date || was.it.start !== v.it.start) out.push('Moved ' + v.it.title + ' — ' + day(was.date) + ' ' + (was.it.start || '') + ' → ' + day(v.date) + ' ' + (v.it.start || '')); });
-    A.places.forEach((v, k)=>{ if(!B.places.has(k)) out.push('Removed ' + v.it.title + ' — ' + day(v.date)); });
+      if(!was) out.push({type: 'add', title: v.it.title, to: {date: v.date, start: v.it.start}, text: 'Added ' + v.it.title + ' — ' + day(v.date) + (v.it.start ? ', ' + v.it.start : '')});
+      else if(was.date !== v.date || was.it.start !== v.it.start) out.push({type: 'mv', title: v.it.title, from: {date: was.date, start: was.it.start}, to: {date: v.date, start: v.it.start},
+        text: 'Moved ' + v.it.title + ' — ' + day(was.date) + ' ' + (was.it.start || '') + ' → ' + day(v.date) + ' ' + (v.it.start || '')}); });
+    A.places.forEach((v, k)=>{ if(!B.places.has(k)) out.push({type: 'del', title: v.it.title, from: {date: v.date, start: v.it.start}, text: 'Removed ' + v.it.title + ' — ' + day(v.date)}); });
     B.meals.forEach((v, k)=>{ const was = A.meals.get(k), [d, m] = k.split('|');
-      if(was && place(was.title) !== place(v.title)) out.push(m + ', ' + day(d) + ': ' + place(was.title) + ' → ' + place(v.title));
-      else if(!was) out.push('Added ' + m.toLowerCase() + ' — ' + day(d) + (place(v.title) !== 'no place named' ? ' at ' + place(v.title) : '')); });
-    A.meals.forEach((v, k)=>{ if(!B.meals.has(k)){ const [d, m] = k.split('|'); out.push('Removed ' + m.toLowerCase() + ' — ' + day(d)); } });
+      if(was && place(was.title) !== place(v.title)) out.push({type: 'meal', title: m, from: {date: d}, to: {date: d}, text: m + ', ' + day(d) + ': ' + place(was.title) + ' → ' + place(v.title)});
+      else if(!was) out.push({type: 'add', meal: true, title: m, to: {date: d}, text: 'Added ' + m.toLowerCase() + ' — ' + day(d) + (place(v.title) !== 'no place named' ? ' at ' + place(v.title) : '')}); });
+    A.meals.forEach((v, k)=>{ if(!B.meals.has(k)){ const [d, m] = k.split('|'); out.push({type: 'del', meal: true, title: m, from: {date: d}, text: 'Removed ' + m.toLowerCase() + ' — ' + day(d)}); } });
     return out;
   }
 
-  return {DEFAULTS, KINDS, merge, asPrompt, check, skeleton, clean, repair, fill, windowOf, tripAnchors, toMin, toTime, addDays, daysBetween, DOC_RULES, WHEN, applies, checklist, diffPlans};
+  /* The changes, explained: what was removed, moved or re-timed to fit each new place sits under it, with why
+     ("to make room for Creek Park"). -> [{text, type, because, sub: [...]}]; changes with no such cause stand alone. */
+  function explainPlans(oldDays, newDays){
+    const all = changesOf(oldDays, newDays);
+    // the causes: places added, then places moved onto another day (they push out what was there)
+    const causes = all.filter(c=>c.type === 'add' && !c.meal).concat(all.filter(c=>c.type === 'mv' && c.from.date !== c.to.date));
+    const top = causes.map(c=>({text: c.text, type: c.type, sub: []}));
+    const causeOn = (date, not) => { const i = causes.findIndex(c=>c !== not && c.to.date === date); return i < 0 ? null : i; };
+    const loose = [];
+    all.forEach(c=>{
+      if(causes.indexOf(c) >= 0) return;
+      let i = null, because = '';
+      if(c.type === 'del'){ i = causeOn(c.from.date); if(i !== null) because = c.meal ? 'replaced to fit ' + causes[i].title : 'to make room for ' + causes[i].title; }
+      else if(c.type === 'mv'){ i = causeOn(c.from.date, c); if(i !== null) because = 're-timed around ' + causes[i].title; }
+      else if(c.type === 'meal'){ i = causeOn(c.to.date); if(i !== null) because = 'nearer to ' + causes[i].title; }
+      if(i !== null) top[i].sub.push({text: c.text, type: c.type, because});
+      else loose.push({text: c.text, type: c.type === 'meal' ? 'mv' : c.type, sub: [],
+        because: c.type === 'mv' && c.from.date === c.to.date ? 'order changed on that day' : ''});
+    });
+    // a place moved to another day: say why, if something added took its day
+    causes.forEach((c, i)=>{ if(c.type === 'mv'){ const j = causes.findIndex(x=>x.type === 'add' && x.to.date === c.from.date); if(j >= 0) top[i].because = 'its day was needed for ' + causes[j].title; } });
+    return top.concat(loose);
+  }
+
+  return {DEFAULTS, KINDS, merge, asPrompt, check, skeleton, clean, repair, fill, windowOf, tripAnchors, toMin, toTime, addDays, daysBetween, DOC_RULES, WHEN, applies, checklist, diffPlans, changesOf, explainPlans};
 })();
 if(typeof module !== 'undefined') module.exports = Rules;
