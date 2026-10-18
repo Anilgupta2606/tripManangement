@@ -165,12 +165,27 @@ const TripBrain = (function(){
       .sort((a, b)=>mustRank(b) - mustRank(a)).slice(0, Math.min(14, fullDays * 2 + 1));
     // places you asked for by name (per city): found among the candidates, they come before every other must-see
     const wanted = ((ctx.rules && ctx.rules.include) || {})[norm(ctx.city || 'any')] || [];
-    const nameMatch = (want, c) => { const a = norm(want), n = norm(c.name); if(!a || !n) return false;
+    // "fountain show" is the Dubai Fountain, "bruj khalifa" the Burj Khalifa: words like "show" or "tour" are not
+    // part of the name, and a letter swapped or missing still matches (only when no name matches as typed)
+    const GENERIC = ['the', 'and', 'show', 'shows', 'tour', 'trip', 'place', 'visit', 'ride', 'experience'];
+    const near = (x, y) => { if(x.length < 4 || y.length < 4 || Math.abs(x.length - y.length) > 1) return false;
+      let i = 0; while(i < x.length && x[i] === y[i]) i++;
+      return x.slice(i + 1) === y.slice(i + 1) || x.slice(i + 1) === y.slice(i) || x.slice(i) === y.slice(i + 1) || (x[i] === y[i + 1] && x[i + 1] === y[i] && x.slice(i + 2) === y.slice(i + 2)); };
+    const nameMatch = (want, c, fuzzy) => { const a = norm(want), n = norm(c.name); if(!a || !n) return false;
       if(n === a || n.includes(a) || a.includes(n)) return true;
-      const ws = a.split(' ').filter(x=>x.length > 2 && ['the', 'and'].indexOf(x) < 0);
-      return ws.length > 0 && ws.every(x=>n.split(' ').some(y=>y === x || y.startsWith(x) || x.startsWith(y))); };
+      const ws = a.split(' ').filter(x=>x.length > 2 && GENERIC.indexOf(x) < 0);
+      return ws.length > 0 && ws.every(x=>n.split(' ').some(y=>y === x || y.startsWith(x) || x.startsWith(y) || (fuzzy && near(x, y)))); };
+    const pinsAsked = (((ctx.rules && ctx.rules.includeOn) || {})[norm(ctx.city || 'any')]) || {};
+    const dates = new Set(days.map(d=>d.date)), pinOf = new Map();
     const askedIds = new Set(), notFound = [];
-    wanted.forEach(wn=>{ const hit = all.filter(c=>nameMatch(wn, c)).sort((a, b)=>views(b) - views(a))[0]; if(hit) askedIds.add(hit.id); else notFound.push(wn); });
+    wanted.forEach(wn=>{
+      const best = f => all.filter(c=>nameMatch(wn, c, f)).sort((a, b)=>views(b) - views(a))[0];
+      const hit = best(false) || best(true);
+      if(!hit){ notFound.push(wn); return; }
+      askedIds.add(hit.id);
+      const on = pinsAsked[norm(wn)];
+      if(on && dates.has(on)) pinOf.set(hit.id, on);
+    });
     all.filter(c=>askedIds.has(c.id) && !must.some(m=>m.id === c.id)).forEach(c=>must.unshift(c));
     const mustIds = new Set(must.map(c=>c.id));
     (locked ? locked.days : []).forEach(d=>d.items.forEach(i=>used.add(norm(i.place || i.title).split(' ').slice(0, 3).join(' '))));
@@ -193,14 +208,17 @@ const TripBrain = (function(){
       const busy = fixed.filter(it=>Ru.toMin(it.start) !== null).map(it=>({s: Ru.toMin(it.start), e: Math.max(Ru.toMin(it.end) || 0, Ru.toMin(it.start) + 1), title: it.title,
         lat: /hotel|check/i.test(it.title) && hotel ? hotel.lat : null, lng: /hotel|check/i.test(it.title) && hotel ? hotel.lng : null}));
       const openOn = c => { const h = c.hours && c.hours.days[new Date(day.date + 'T00:00:00Z').getUTCDay()]; return !h || h.length > 0; };
-      // a place you asked for by name, not planned yet and open today, gets a slot even on a full day
-      const wantToday = all.filter(c=>askedIds.has(c.id) && !isUsed(c) && openOn(c));
-      const max = Math.max(maxOf(day, di) - fixed.filter(it=>['sight', 'activity', 'shopping'].indexOf(it.kind) >= 0).length, wantToday.length ? 1 : 0);
+      // a place you asked for by name, not planned yet and open today, gets a slot even on a full day; one asked for
+      // on a day goes on that day (and no other day takes it first)
+      const elsewhere = c => pinOf.has(c.id) && pinOf.get(c.id) !== day.date;
+      const wantToday = all.filter(c=>askedIds.has(c.id) && !isUsed(c) && openOn(c) && !elsewhere(c));
+      const pinnedToday = wantToday.filter(c=>pinOf.get(c.id) === day.date);
+      const max = Math.max(maxOf(day, di) - fixed.filter(it=>['sight', 'activity', 'shopping'].indexOf(it.kind) >= 0).length, pinnedToday.length, wantToday.length ? 1 : 0);
       let stops = [];
       if(max > 0){
         // one area a day: the best place left anchors the day, the rest are valued by how close they are to it
         // (a place you asked for by name is never left out for its distance)
-        const left = all.filter(c=>!isUsed(c) && (askedIds.has(c.id) || (c.value > 0 && (c.km == null || c.km < 35))));
+        const left = all.filter(c=>!isUsed(c) && !elsewhere(c) && (askedIds.has(c.id) || (c.value > 0 && (c.km == null || c.km < 35))));
         const arrivalDay = ctx.arrival && ctx.arrival.date === day.date, lastDay = ctx.departure && ctx.departure.date === day.date;
         const pool = left.filter(c=>askedIds.has(c.id) || !(arrivalDay || lastDay) || c.km == null || c.km < 4);
         // the day's anchor: the best-known must-see not yet planned (open that day); else the best place left
@@ -225,9 +243,20 @@ const TripBrain = (function(){
             return v;
           }};
         let res = b.planDay(opts);
+        // places asked for on this day: all of them first, at the best times they are open, the rest of the day around them
+        if(pinnedToday.some(w=>!res.stops.some(x=>x.c.id === w.id))){
+          const wc = pinnedToday.map(w=>Object.assign({}, dayCands.find(c=>c.id === w.id) || w, {value: Math.max(w.value, 0) + 3}));
+          const first = b.planDay(Object.assign({}, opts, {candidates: wc, max: pinnedToday.length}));
+          if(first.stops.length){
+            const taken = new Set(first.stops.map(x=>x.c.id));
+            const rest = max > first.stops.length ? b.planDay(Object.assign({}, opts, {busy: busy.concat(first.stops.map(st=>({s: st.s, e: st.e, title: st.c.name, lat: st.c.lat, lng: st.c.lng}))).sort((x, y)=>x.s - y.s),
+              candidates: dayCands.filter(c=>!taken.has(c.id) && !pinOf.has(c.id)), max: max - first.stops.length})) : {stops: []};
+            res = Object.assign({}, res, {stops: first.stops.concat(rest.stops).sort((x, y)=>x.s - y.s)});
+          }
+        }
         // places asked for by name come first: if the day's plan left one out, plan it on its own (it takes the
         // best open slot - Global Village from 16:00) and fit the rest of the day around it
-        for(const want of wantToday){
+        for(const want of (pinnedToday.length ? [] : wantToday)){
           if(res.stops.some(x=>x.c.id === want.id) || res.stops.some(x=>askedIds.has(x.c.id))) break;
           const wc = dayCands.find(c=>c.id === want.id) || Object.assign({}, want);
           const only = b.planDay(Object.assign({}, opts, {candidates: [Object.assign({}, wc, {value: Math.max(wc.value, 0) + 3})], max: 1}));
@@ -300,8 +329,9 @@ const TripBrain = (function(){
     const used2 = (know ? know.used : []).slice();
     // what happened to the places asked for by name
     const inPlan = new Set(fixedUp.days.flatMap(d=>d.items.map(i=>norm(i.title))));
-    const askedNames = all.filter(c=>askedIds.has(c.id)).map(c=>c.name);
-    const placed = askedNames.filter(nm=>inPlan.has(norm(nm))), unplaced = askedNames.filter(nm=>!inPlan.has(norm(nm)));
+    const onDay = (c, date) => fixedUp.days.some(d=>d.date === date && d.items.some(i=>norm(i.title) === norm(c.name)));
+    const askedC = all.filter(c=>askedIds.has(c.id)), ok = c => pinOf.has(c.id) ? onDay(c, pinOf.get(c.id)) : inPlan.has(norm(c.name));
+    const placed = askedC.filter(ok).map(c=>c.name), unplaced = askedC.filter(c=>!ok(c)).map(c=>c.name + (pinOf.has(c.id) ? ' on ' + dayLabel(pinOf.get(c.id)) : ''));
     const askedNote = (placed.length ? ' · included as you asked: ' + placed.join(', ') : '')
       + (unplaced.length ? ' · could not fit ' + unplaced.join(', ') + ' (closed or no room on the days) - add it by hand' : '')
       + (notFound.length ? ' · not found in the travel guide: ' + notFound.join(', ') + ' - add it by hand with + Add' : '');
@@ -312,16 +342,44 @@ const TripBrain = (function(){
      -> {rules (new), fixed: [{date, item}], free: [{date, part}], said: [text], understood: bool} */
   /* "include the Dubai Mall", "add Burj Khalifa", "I want to visit the Gold Souk" -> the place names asked for.
      (These used to become a liking for the kind of place - "More malls" - so the place itself could still be left out.) */
-  function placesAsked(text){
-    const out = [];
-    const re = /\b(?:include|add|visit|see|go to|going to|take (?:us|me) to|keep|fit in|squeeze in)\s+(?:the\s+)?([^,.;!?\n]+)/gi;
-    let m;
-    while((m = re.exec(String(text || '')))){
-      let name = m[1].replace(/\b(also|too|as well|please|if possible|in the plan|on (?:day \d+|the \d+\w*)|this trip|on this trip|for sure|definitely)\b/gi, ' ')
-        .replace(/\s+(and|&)\s+/gi, '|').replace(/\s+/g, ' ').trim();
-      name.split('|').map(s=>s.trim()).filter(s=>s.length >= 3 && !/^(a|an|some|more|less|day|beach day|rest|time|break|it|them|that|this)\b/i.test(s)).forEach(s=>out.push(s));
-    }
-    return Array.from(new Set(out));
+  function placesAsked(text){ return placeRequests(text).map(x=>x.name); }
+  /* ... with the day each is wanted on: "Dubai Mall on day 1", "cover burj khalifa and dubai mall on day 1",
+     "move the Gold Souk to day 3", "Burj Khalifa on the 25th", "Atlantis on the last day" -> [{name, day: {day}|{date}|null}].
+     The day was thrown away, and a place named without "include"/"add" was not seen at all, so these changed nothing. */
+  const MONTHS = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*';
+  const DAYREF = new RegExp('\\b(?:(?:on|to|for|in)\\s+)?(?:(?:the\\s+)?(first|last)\\s+day|day\\s+(\\d{1,2})\\b|(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)(?:\\s+(?:of\\s+)?' + MONTHS + ')?\\b|(\\d{1,2})\\s+' + MONTHS + '\\b|' + MONTHS + '\\s+(\\d{1,2})\\b)', 'i');
+  const VERB = /\b(?:include|add|visit|see|go to|going to|take (?:us|me) to|keep|fit in|squeeze in|cover|covering|explore|move|put|plan|schedule|shift|bring)\s+(?:the\s+)?(.+)$/i;
+  const NOT_PLACE = /^(a|an|some|more|less|day|days|beach day|rest|time|break|it|them|that|this|evening|morning|afternoon|night|lunch|dinner|breakfast|free|everything|nothing|all|one|two|three)\b/i;
+  function placeRequests(text){
+    const out = [], seen = new Set();
+    String(text || '').split(/[,.;!?\n]+|\bthen\b/i).forEach(clause=>{
+      const m = DAYREF.exec(clause);
+      const day = !m ? null : m[1] ? {day: /first/i.test(m[1]) ? 1 : -1} : m[2] ? {day: +m[2]} : {date: +(m[3] || m[4] || m[5])};
+      const rest = (m ? clause.slice(0, m.index) + ' ' + clause.slice(m.index + m[0].length) : clause).replace(/\s+/g, ' ').trim();
+      let names = '';
+      const v = VERB.exec(rest);
+      if(v) names = v[1];
+      else if(m){
+        // no verb: the clause is only "<place> on <day>" - a few words, not a sentence about the day
+        const bare = rest.replace(/^(and|also|please|then|plus|&)\s+/i, '').trim();
+        if(bare && bare.split(' ').length <= 5 && !/^(i|we|my|our|us|you|it|is|are|was|have|has|keep|make|need|no|not|too|very|every|each)\b/i.test(bare)
+          && !/\b(is|are|was|were|have|has|had|meeting|free|packed|busy|tired|relax|at \d)\b/i.test(bare)) names = bare;
+      }
+      if(!names) return;
+      names.replace(/\b(also|too|as well|please|if possible|in the plan|in my plan|this trip|on this trip|for sure|definitely)\b/gi, ' ')
+        .replace(/\s+(and|&)\s+/gi, '|').split('|').map(x=>x.replace(/\s+/g, ' ').replace(/^(the|and)\s+/i, '').replace(/\s+(to|on|for|in|at)$/i, '').trim())
+        .filter(x=>x.length >= 3 && !NOT_PLACE.test(x)).forEach(name=>{ const k = name.toLowerCase(); if(!seen.has(k)){ seen.add(k); out.push({name, day}); } });
+    });
+    return out;
+  }
+  const MON3 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const dayLabel = date => +date.slice(8, 10) + ' ' + MON3[+date.slice(5, 7) - 1];
+  /* What the AI must still do after the planner: the places it could not fit (on the day asked) or find - or, when the
+     request changed nothing at all and was not about places it put in, the request itself (it ended as "nothing changed"). */
+  function forAI(asked, changes){
+    const a = asked || {}, list = (a.unplaced || []).concat(a.notFound || []);
+    if(!list.length && !changes && !(a.placed || []).length) return ['the change you asked for'];
+    return list;
   }
 
   /* The places asked for by name in this city that the gathered knowledge does not have (to look up). */
@@ -335,22 +393,32 @@ const TripBrain = (function(){
   function apply(text, ctx, days, given){
     const b = B(), out = {rules: Object.assign({}, ctx.rules || {}), fixed: [], free: [], said: [], understood: false};
     delete out.rules.custom;
-    const asked = given ? [] : placesAsked(text);
-    if(asked.length){
-      const city = norm(ctx.city || 'any'), inc = Object.assign({}, out.rules.include || {});
-      inc[city] = Array.from(new Set((inc[city] || []).concat(asked)));
-      out.rules.include = inc;
-      out.understood = true;
-      out.said.push('Must include: ' + asked.join(', '));
-    }
-    // a named place is the request - not a liking for its kind ("include Dubai Mall" is not "more malls")
-    const acts = (given || b.understand(text, {app: 'trip'})).filter(a=>!(asked.length && a.do === 'like'));
+    const reqs = given ? [] : placeRequests(text), asked = reqs.map(x=>x.name);
     const dayOf = ref => {
       if(!ref || !days || !days.length) return null;
       if(ref.day) return (ref.day === -1 ? days[days.length - 1] : days[ref.day - 1]) || null;
       if(ref.date) return days.find(d=>+d.date.slice(8, 10) === ref.date) || null;
       return null;
     };
+    if(asked.length){
+      const city = norm(ctx.city || 'any'), inc = Object.assign({}, out.rules.include || {});
+      inc[city] = Array.from(new Set((inc[city] || []).concat(asked)));
+      out.rules.include = inc;
+      // the day each is wanted on: kept with the rules, so the next re-plan keeps it there too
+      const on = Object.assign({}, out.rules.includeOn || {}), pins = Object.assign({}, on[city] || {});
+      const plain = [], dated = [];
+      reqs.forEach(x=>{
+        const d = dayOf(x.day);
+        if(d){ pins[norm(x.name)] = d.date; dated.push(x.name + ' on ' + dayLabel(d.date)); }
+        else{ plain.push(x.name); if(x.day) out.said.push('(which day for “' + x.name + '”? the plan has days 1 to ' + ((days || []).length || '?') + ')'); }
+      });
+      on[city] = pins; out.rules.includeOn = on;
+      out.understood = true;
+      if(plain.length) out.said.push('Must include: ' + plain.join(', '));
+      if(dated.length) out.said.push(dated.join(', '));
+    }
+    // a named place is the request - not a liking for its kind ("include Dubai Mall" is not "more malls")
+    const acts = (given || b.understand(text, {app: 'trip'})).filter(a=>!(asked.length && a.do === 'like'));
     acts.forEach(a=>{
       out.understood = true;
       if(a.do === 'pace'){ out.rules.pace = a.value; out.said.push((a.value === 'relaxed' ? 'Fewer places a day' : 'More places a day') + ' (pace: ' + a.value + ')'); }
@@ -430,6 +498,6 @@ Day N counts from 1 (-1 = the last day); D is the day of the month. If the reque
     return {acts, by: r.provider};
   }
 
-  return {preferences, candidates, eateries, plan, apply, freeBlock, learnFromEdit, ampm, translate, checkActions, missingAsked};
+  return {preferences, candidates, eateries, plan, apply, freeBlock, learnFromEdit, ampm, translate, checkActions, missingAsked, placeRequests, placesAsked, forAI};
 })();
 if(typeof module !== 'undefined') module.exports = TripBrain;

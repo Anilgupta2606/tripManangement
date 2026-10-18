@@ -4,7 +4,7 @@
    ========================================================= */
 
 /* ================================================================ News */
-const newsState = {busy: false, deep: false, autoDone: new Set()};
+const newsState = {busy: false, autoDone: new Set()};
 VIEWS.news = function(main, cur){
   if(!cur){ main.innerHTML = `<div class="card"><p>Pick or create a trip to see the news for where you are going.</p></div>`; return; }
   const cities = citiesOf(cur);
@@ -20,7 +20,6 @@ VIEWS.news = function(main, cur){
   <section class="section-head"><div><h1>${esc(city || cur.name)}${country && country !== city ? `<span class="muted">, ${esc(country)}</span>` : ''}</h1></div>
     <div class="row">
       ${cities.length > 1 ? `<select id="n-city">${cities.map(c=>`<option${c.city === city ? ' selected' : ''}>${esc(c.city)}</option>`).join('')}</select>` : ''}
-      ${Cloud.canSearch() ? `<label class="check small"><input type="checkbox" id="n-deep" ${newsState.deep ? 'checked' : ''}> AI also searches the web</label>` : ''}
       <button class="btn primary" id="n-go" ${city ? '' : 'disabled'}>${icon('refresh')} ${n ? 'Check again' : 'Check now'}</button></div></section>
   ${!city ? '<div class="card">Set the trip’s city first (Trips → Edit).</div>' : ''}
   <div id="n-progress"></div>
@@ -45,10 +44,9 @@ VIEWS.news = function(main, cur){
       ${col('🛡️ Safety &amp; geopolitics', n.security, 'No conflict, unrest or security news found in the last week.')}
       ${col('📰 ' + esc(city), n.city, 'No recent headlines found.')}
     </div>
-    <p class="muted small">Checked ${esc(ago(n.at))} · headlines from GDELT (worldwide news), advice from gov.uk, weather from Open-Meteo.${(n.errors || []).length ? ' Problems: ' + esc(n.errors.join('; ')) : ''}</p>`
+    <p class="muted small">Checked ${esc(ago(n.at))} · headlines from ${esc((n.from || []).join(' and ') || 'GDELT (worldwide news)')}, advice from gov.uk, weather from Open-Meteo.${(n.kept || []).length ? ' ' + esc(n.kept.join(', ')) + ': the last headlines found (this check got none).' : ''}${(n.errors || []).length ? ' Problems: ' + esc(n.errors.join('; ')) : ''}</p>`
   : city ? `<section class="card"><p class="muted">Check what’s happening in ${esc(city)}: local news, war or unrest, strikes and flight cancellations, government travel advice and the weather — with an AI summary of what it means for your trip.</p></section>` : ''}`;
   if($('n-city')) $('n-city').onchange = e=>{ newsState.city = e.target.value; render(); };
-  if($('n-deep')) $('n-deep').onchange = e=>{ newsState.deep = e.target.checked; };
   if($('n-go')) $('n-go').onclick = ()=>checkNews(cur, city, country);
   // stale (over 6 h) or never checked: check by itself when the tab opens
   const nk = cur.id + '|' + city.toLowerCase();
@@ -70,14 +68,24 @@ async function checkNews(trip, city, country){
       News.advisory(country).catch(()=>null),
       loc ? Geo.weather(loc, daysUntil(span.start || todayISO()) > 0 ? span.start : todayISO(), span.end && span.end >= todayISO() ? span.end : Rules.addDays(todayISO(), 6)).catch(()=>null) : null,
     ]);
+    // first everything the internet has (the web's news and GDELT, the government advice, the weather) ...
     const h = await News.headlines(city, country, airports, prog);
     const n = Object.assign({at: Date.now(), advisory, weather}, h);
+    // a source that failed this time does not wipe what the last check found: that column keeps its headlines
+    const old = LOCAL.news[trip.id + '|' + city.toLowerCase()];
+    n.kept = [];
+    [['city', 'news from', 'News from ' + city], ['security', 'safety', 'Safety'], ['travel', 'flights', 'Flights']].forEach(([k, err, label])=>{
+      const failed = n.errors.some(e=>e.toLowerCase().startsWith(err));
+      if(failed && !n[k].length && old && (old[k] || []).length){ n[k] = old[k]; n.kept.push(label); }
+    });
+    if(!n.advisory && old && old.advisory){ n.advisory = old.advisory; }
+    // ... then the AI reads all of it. When the internet gave little, it also searches the web itself (Gemini, or your
+    // own AI on the Mac); with plenty it only summarises what was found (quicker).
     if(Cloud.aiAvailable()){
       prog('The AI is reading it all…');
-      // no headlines (the news service busy or down): the AI searches the web itself when it can
-      const noHeadlines = !n.city.length && !n.security.length && !n.travel.length && n.errors.length;
-      try{ n.summary = await News.summarise({city, country, start: span.start, end: span.end, flights: fl}, n, {search: (newsState.deep || noHeadlines) && Cloud.canSearch()}); }
-      catch(e){ n.summaryError = e.message; }
+      const found = n.city.length + n.security.length + n.travel.length;
+      try{ n.summary = await News.summarise({city, country, start: span.start, end: span.end, flights: fl}, n, {search: found < 8}); }
+      catch(e){ n.summaryError = e.message; if(old && old.summary){ n.summary = old.summary; n.summaryError = 'this check: ' + e.message + ' — showing the last summary'; } }
     } else n.summaryError = 'Add a free AI key in Settings for a summary.';
     LOCAL.news[trip.id + '|' + city.toLowerCase()] = n;
     LOCAL.news[trip.id] = n;                    // the itinerary planner reads the latest

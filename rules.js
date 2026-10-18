@@ -64,6 +64,8 @@ const Rules = (function(){
     ];
     const inc = Object.entries(r.include || {}).filter(([, v])=>v && v.length);
     if(inc.length) lines.push('The traveller asked for these places by name - include each one (at a time it is open): ' + inc.map(([c, v])=>c + ': ' + v.join(', ')).join('; ') + '.');
+    const on = Object.entries(r.includeOn || {}).map(([c, v])=>[c, Object.entries(v || {})]).filter(([, v])=>v.length);
+    if(on.length) lines.push('And on the day they asked for (keep each on that date, at a time it is open): ' + on.map(([c, v])=>c + ': ' + v.map(([n, d])=>n + ' on ' + d).join(', ')).join('; ') + '.');
     if(r.extra) lines.push('13. Also: ' + r.extra);
     (r.custom || []).forEach((t, i)=>lines.push((r.extra ? 14 : 13) + i + '. ' + t));      // the traveller's own rules
     if(ctx && ctx.issues) lines.push('The traveller\'s latest requests override rules 1–11 where they conflict, but never rule 12.');

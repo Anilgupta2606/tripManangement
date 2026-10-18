@@ -99,6 +99,8 @@ label.check input{ width: 18px; height: 18px; min-height: 0; }
 .icon-btn:disabled{ opacity: .3; }
 .icon-btn.small{ width: 30px; height: 30px; }
 .icon-btn.small .ic{ width: 16px; height: 16px; }
+.icon-btn.inline-edit{ width: 30px; height: 30px; vertical-align: middle; }
+.icon-btn.inline-edit .ic{ width: 16px; height: 16px; }
 .row{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .row.end{ justify-content: flex-end; margin-top: 12px; }
 .grid2, .grid3, .grid4{ display: grid; gap: 10px 12px; }

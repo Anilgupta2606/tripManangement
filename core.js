@@ -395,7 +395,11 @@ function shell(){
   if(typeof MoneyAI !== 'undefined' && MoneyAI.widget) MoneyAI.widget($('ai-switch'));      // which AI answers, and switching it
   $('sync-btn').onclick = ()=>Cloud.syncConfig() ? autoSync(true) : openSettings('sync');
   $('settings-btn').onclick = ()=>openSettings();
-  $('trip-pick').onchange = e=>{ if(e.target.value === '__new') { e.target.value = S.settings.lastTrip || ''; VIEWS.newTrip(); } else setTrip(e.target.value); };
+  $('trip-pick').onchange = e=>{
+    const v = e.target.value, cur = currentTrip();
+    if(v === '__new' || v === '__edit'){ e.target.value = cur ? cur.id : ''; return v === '__new' ? VIEWS.newTrip() : cur && VIEWS.newTrip(cur); }
+    setTrip(v);
+  };
   $('modal').addEventListener('click', e=>{ if(e.target.id === 'modal') closeModal(); });
   document.addEventListener('keydown', e=>{ if(e.key === 'Escape'){ if(!$('modal').hidden) closeModal(); else if(!$('viewer').hidden) closeViewer(); } });   // the top one first
   PinLock.init();
@@ -472,7 +476,7 @@ function render(){
   const trips = S.trips.slice().map(t=>Object.assign({}, t, tripSpan(t))).sort((a, b)=>String(b.start).localeCompare(String(a.start)));
   const cur = currentTrip();
   $('trip-pick').innerHTML = (trips.length ? '' : '<option value="">No trips yet</option>') +
-    trips.map(t=>`<option value="${esc(t.id)}"${cur && cur.id === t.id ? ' selected' : ''}>${esc(t.name)}${t.start ? ' · ' + esc(fmtRange(t.start, t.end)) : ''}</option>`).join('') + '<option value="__new">+ New trip…</option>';
+    trips.map(t=>`<option value="${esc(t.id)}"${cur && cur.id === t.id ? ' selected' : ''}>${esc(t.name)}${t.start ? ' · ' + esc(fmtRange(t.start, t.end)) : ''}</option>`).join('') + (cur ? '<option value="__edit">✎ Rename / edit this trip…</option>' : '') + '<option value="__new">+ New trip…</option>';
   const nav = TABS.map(t=>`<a role="tab" href="#${t.id}" class="${t.id === tab ? 'on' : ''}" aria-selected="${t.id === tab}">${icon(t.icon)}<span>${t.label}</span></a>`).join('');
   $('tabs').innerHTML = nav; $('bottom-nav').innerHTML = nav;
   const main = $('main');

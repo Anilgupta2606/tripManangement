@@ -402,19 +402,80 @@ const News = (function(){
   /* GDELT refuses quoted words under 4 letters: "Goa" becomes ("in Goa" OR "Goa airport" …) */
   const q = s => { s = String(s).replace(/"/g, '').trim(); return s.length >= 4 ? '"' + s + '"' : '("in ' + s + '" OR "' + s + ' airport" OR "' + s + ' police" OR "' + s + ' government")'; };
 
-  /* -> {city:[], security:[], travel:[]} headlines for the last few days */
+  /* THE WEB'S NEWS through your own Mac (its search engine, SearXNG, asks Google News, Bing News and others): no key,
+     no daily limit, and it answers when GDELT is busy (GDELT allows one question every 5 seconds to everyone and
+     answered "Too Many Requests" to all three, so the columns stayed empty). From the phone it is reached through
+     Tailscale, as the AI is. -> [{title, url, source, date, snippet}] */
+  async function webNews(query){
+    const M = typeof MoneyAI !== 'undefined' ? MoneyAI : null;
+    if(!M || !M.macFetch || (M.macMaybe && !M.macMaybe())) throw new Error('your Mac is not reachable');
+    const ctl = new AbortController(), t = setTimeout(()=>ctl.abort(), 45000);
+    try{
+      const r = await M.macFetch('/search?n=10&q=' + encodeURIComponent('!news ' + query), {signal: ctl.signal});
+      const d = await r.json();
+      if(!r.ok || d.error) throw new Error(d.error || 'search answered ' + r.status);
+      return (d.results || []).map(x=>({title: x.title, url: x.url, source: hostOf(x.url), date: x.date ? new Date(x.date).toISOString() : '', snippet: String(x.snippet || '').slice(0, 300)}));
+    }catch(e){ throw new Error(e.name === 'AbortError' ? 'the web search took too long' : e.message); }
+    finally{ clearTimeout(t); }
+  }
+  const hostOf = u => { try{ return new URL(u).hostname.replace(/^www\./, ''); }catch(e){ return ''; } };
+  const COUNTRY_ALSO = {'united arab emirates': ['uae', 'emirati'], 'united states': ['usa', 'u.s.'], 'united kingdom': ['uk', 'britain'], 'saudi arabia': ['saudi']};
+  /* Keep what is recent and about the place: a search for "Dubai" also brings a 2024 Wikinews story about a
+     plane crash in India. Undated items stay (after the dated ones) unless their address shows an older year. */
+  function relevant(list, words, maxDays, now){
+    now = now || Date.now();
+    const yr = new Date(now).getUTCFullYear(), ws = words.filter(Boolean).map(w=>String(w).toLowerCase());
+    return (list || []).filter(a=>{
+      if(!a || !a.title || !a.url) return false;
+      const text = (a.title + ' ' + (a.snippet || '') + ' ' + a.url).toLowerCase();
+      if(ws.length && !ws.some(w=>w.length <= 3 ? new RegExp('\\b' + w.replace(/\./g, '\\.') + '\\b').test(text) : text.indexOf(w) >= 0)) return false;
+      const t = a.date ? Date.parse(a.date) : NaN;
+      if(!isNaN(t)) return now - t <= maxDays * 86400000 && t <= now + 86400000;
+      const y = (a.url.match(/\/(20\d\d)[\/-]/) || [])[1];
+      return !y || +y >= yr;
+    });
+  }
+  /* Both sources in one list: no story twice (the same headline from two papers), the newest first. */
+  function merge(){
+    const seen = new Set(), out = [];
+    [].concat.apply([], arguments).forEach(a=>{
+      const k = String(a.title || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 60);
+      if(!k || seen.has(k) || seen.has(a.url)) return;
+      seen.add(k); seen.add(a.url); out.push(a);
+    });
+    return out.sort((a, b)=>(Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
+  }
+
+  /* -> {city:[], security:[], travel:[], errors:[], from:[]} headlines for the last few days: the web's news (through
+     your Mac) and GDELT, together. A column is "not found" only when both answered and had nothing. */
   async function headlines(city, country, airports, progress){
     const say = progress || (()=>{});
-    const out = {city: [], security: [], travel: [], errors: []};
+    const out = {city: [], security: [], travel: [], errors: [], from: []};
     const place = country && country !== city ? '(' + q(city) + ' OR ' + q(country) + ')' : q(city);
+    const cw = country && country !== city ? [country].concat(COUNTRY_ALSO[String(country).toLowerCase()] || []) : [];
     const jobs = [
-      ['city', q(city), '3d', 'news from ' + city],
-      ['security', place + ' (conflict OR attack OR missile OR military OR airstrike OR invasion OR protest OR riot OR curfew OR terror OR strike OR unrest OR evacuation OR sanctions OR ceasefire)', '7d', 'safety and geopolitics'],
-      ['travel', '(' + [q(city)].concat((airports || []).slice(0, 2).map(a=>'"' + a + ' airport"')).join(' OR ') + ') (flight OR flights OR airport OR airline OR airspace OR cancelled OR delayed OR diverted OR grounded)', '5d', 'flights and airports'],
+      {k: 'city', gq: q(city), span: '3d', days: 7, label: 'news from ' + city, web: city, words: [city]},
+      {k: 'security', gq: place + ' (conflict OR attack OR missile OR military OR airstrike OR invasion OR protest OR riot OR curfew OR terror OR strike OR unrest OR evacuation OR sanctions OR ceasefire)', span: '7d', days: 10, label: 'safety and geopolitics',
+        web: city + (cw.length ? ' OR ' + (cw[1] || cw[0]) : '') + ' security OR attack OR protest OR conflict OR missile OR strike', words: [city].concat(cw)},
+      {k: 'travel', gq: '(' + [q(city)].concat((airports || []).slice(0, 2).map(a=>'"' + a + ' airport"')).join(' OR ') + ') (flight OR flights OR airport OR airline OR airspace OR cancelled OR delayed OR diverted OR grounded)', span: '5d', days: 7, label: 'flights and airports',
+        web: city + ' airport flights' + ((airports || [])[0] ? ' OR ' + airports[0] + ' airport' : ''), words: [city].concat(cw, (airports || []).slice(0, 2))},
     ];
-    for(const [k, query, span, label] of jobs){
-      say('Reading ' + label + '…');
-      try{ out[k] = await gdelt(query, span, 25); }catch(e){ out.errors.push(label + ': ' + e.message); }
+    // the web first, all three at once (seconds); GDELT after, one question every 6.5 s
+    say('Searching the web for the latest news…');
+    const web = await Promise.all(jobs.map(j=>webNews(j.web).then(list=>({list}), e=>({error: e.message}))));
+    if(web.some(w=>w.list)) out.from.push('the web (Google News, Bing News… through your Mac)');
+    const webCount = web.reduce((n, w, i)=>n + relevant(w.list, jobs[i].words, jobs[i].days).length, 0);
+    for(let i = 0; i < jobs.length; i++){
+      const j = jobs[i];
+      let g = null, gErr = '';
+      // GDELT too, unless the web already gave plenty (it adds a minute of waiting)
+      if(webCount < 12 || !web[i].list){
+        say('Reading ' + j.label + '…');
+        try{ g = await gdelt(j.gq, j.span, 25); }catch(e){ gErr = e.message; }
+      }
+      if(g && out.from.indexOf('GDELT (worldwide news)') < 0) out.from.push('GDELT (worldwide news)');
+      out[j.k] = merge(relevant(web[i].list, j.words, j.days), relevant(g, [], j.days));
+      if(!web[i].list && !g) out.errors.push(j.label + ': ' + ([web[i].error, gErr].filter(Boolean).join('; ') || 'no answer'));
     }
     return out;
   }
@@ -450,7 +511,7 @@ const News = (function(){
   /* The AI's reading of all of it for this trip -> {status:'clear'|'caution'|'serious', headline, points:[], flights, advice, by} */
   async function summarise(trip, data, opts){
     opts = opts || {};
-    const list = (arr, n) => (arr || []).slice(0, n).map(a=>'- ' + a.title + ' (' + a.source + ', ' + String(a.date).slice(0, 10) + ')').join('\n') || '(none)';
+    const list = (arr, n) => (arr || []).slice(0, n).map(a=>'- ' + a.title + ' (' + a.source + (a.date ? ', ' + String(a.date).slice(0, 10) : '') + ')' + (a.snippet ? ': ' + a.snippet.slice(0, 200) : '')).join('\n') || '(none)';
     const brief = search => `You brief a traveller on what is happening at their destination. Be factual and calm, only use what you are given${search ? ' or find with Google Search (prefer the last 7 days)' : ''}, and say plainly when things look normal.
 Answer with JSON only: {"status":"clear"|"caution"|"serious","headline":"one line","points":["3-6 short bullet points, most important first"],"flights":"one line on flights/airports: cancellations, closures, strikes, airspace — or that nothing unusual is reported","advice":"one line: what the traveller should do"}
 "serious" = war, airspace closure, government advice against travel, major unrest or disaster affecting the trip; "caution" = protests, strikes, weather disruption, partial warnings; else "clear".`;
@@ -461,11 +522,13 @@ Headlines about ${trip.city}:\n${list(data.city, 15)}
 Safety / geopolitics:\n${list(data.security, 15)}
 Flights / airports:\n${list(data.travel, 15)}`;
     // with the web search if an AI that can search is free; otherwise the next AI (Groq, …) writes it from the headlines
-    const r = await Cloud.chat(brief(!!opts.search), [{role: 'user', content: msg}], opts.search ? {search: true, searchOptional: true} : {});
+    // what your own AI looks up on the web when it does the searching (no Gemini key needed)
+    const webQuestion = `What is the latest news (last 7 days) affecting travellers to ${trip.city}${trip.country ? ', ' + trip.country : ''}: safety and security, regional tensions, flights and airports, strikes and protests, weather? Give dated facts with sources.`;
+    const r = await Cloud.chat(brief(!!opts.search), [{role: 'user', content: msg}], opts.search ? {search: true, searchOptional: true, webQuestion} : {});
     const j = Cloud.json(r.text);
-    return Object.assign({status: 'clear', headline: '', points: [], flights: '', advice: ''}, j, {by: r.provider + ' · ' + r.model + (opts.search && r.noSearch ? ' (without web search — the AI that searches is busy)' : ''), sources: r.sources || [], at: Date.now()});
+    return Object.assign({status: 'clear', headline: '', points: [], flights: '', advice: ''}, j, {by: r.provider + ' · ' + r.model + (opts.search && r.searchedBy ? ' (with a web search on ' + r.searchedBy + ')' : opts.search && r.noSearch ? ' (without web search — the AI that searches is busy)' : ''), sources: r.sources || [], at: Date.now()});
   }
-  return {headlines, advisory, summarise, gdelt};
+  return {headlines, advisory, summarise, gdelt, webNews, relevant, merge};
 })();
 
 /* ================================================================ Flights */

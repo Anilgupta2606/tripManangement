@@ -42,7 +42,7 @@ VIEWS.plan = function(main, cur){
   const nErr = problems.filter(p=>p.level === 'error').length, nWarn = problems.filter(p=>p.level === 'warn').length;
 
   main.innerHTML = `
-  <section class="section-head"><div><h1>${esc(cur.name)}</h1></div>
+  <section class="section-head"><div><h1>${esc(cur.name)} <button class="icon-btn inline-edit" id="p-rename" title="Rename or edit this trip" aria-label="Rename or edit this trip">${icon('edit')}</button></h1></div>
     <div class="row">${plan ? `<button class="btn ghost" id="p-undo" ${plan.versions && plan.versions.length ? '' : 'disabled'}>Undo</button><button class="btn ghost" id="p-copy">Copy as text</button>` : ''}<button class="btn soft" id="p-rules">${icon('shield')} Rules</button></div></section>
   <section class="card plan-setup">
     <div class="grid4">
@@ -107,6 +107,7 @@ VIEWS.plan = function(main, cur){
     onPick: p=>{ planState.countries[p.city.toLowerCase()] = p.country; }});
   ['p-city', 'p-start', 'p-end', 'p-hotel'].forEach(id=>$(id).onchange = reSetup);
   $('p-rules').onclick = ()=>openRules();
+  $('p-rename').onclick = ()=>VIEWS.newTrip(cur);
   if($('p-key')) $('p-key').onclick = e=>{ e.preventDefault(); location.href = Cloud.central ? '/setup/#ai' : '#'; if(!Cloud.central) openSettings('ai'); };
   $('p-skel').onclick = async ()=>{
     if(plan && !(await confirmBox('Start again without AI?', 'The plan is replaced by the fixed parts only — flights, transfers, check-in/out and meal slots — with open blocks for you to fill. Undo brings the old plan back.', 'Start again'))) return;
@@ -450,15 +451,22 @@ async function brainPlan(trip, c, what){
   }catch(e){ Busy.done('Could not plan: ' + e.message, true); }
   finally{ planState.busy = false; }
 }
-/* Trip Vault's own planner first; when it could not place or find a place you asked for by name, the AI is asked
-   (it can do what the planner cannot - make Global Village the evening, with dinner there). */
+/* Trip Vault's own planner first; when it could not place or find a place you asked for (on the day you asked), or the
+   request changed nothing at all, the AI is asked: it can do what the planner cannot - make Global Village the evening,
+   with dinner there. (A request the planner half-understood used to end as "Nothing in the plan changed".) */
 async function brainThenAI(trip, c, text){
+  const key = planKey(trip.id, c.city), before = S.plans[key];
+  const was = before && before.history ? before.history.length : 0;
   await brainPlan(trip, c, text);
-  const p = S.plans[planKey(trip.id, c.city)], a = (p && p.asked) || {};
-  const missed = (a.unplaced || []).concat(a.notFound || []);
-  if(!missed.length || !Cloud.aiAvailable()) return;
-  toast('Trip Vault’s planner could not fit ' + missed.join(', ') + ' — asking the AI');
-  return aiPlan(trip, c, text + ' (Trip Vault\'s planner could not fit ' + missed.join(', ') + ' — fit it in at a time it is open; it may replace another place or be the evening, with dinner there)', $('p-send'));
+  const p = S.plans[key];
+  if(!p || !p.history || p.history.length === was) return;           // the planner stopped (no guide): it said why
+  const h = p.history[p.history.length - 1];
+  const todo = TripBrain.forAI(p.asked, (h.explained || []).length || (h.changes || []).length);
+  if(!todo.length) return;
+  if(!Cloud.aiAvailable()){ toast('Trip Vault’s planner could not do ' + todo.join(', ') + ' — add a free AI key in Setup, or change it by hand.', 'error'); return; }
+  toast('Trip Vault’s planner could not do ' + todo.join(', ') + ' — asking the AI');
+  return aiPlan(trip, c, text + (todo[0] === 'the change you asked for' ? ' (Trip Vault\'s planner could not make this change — make it)'
+    : ' (Trip Vault\'s planner could not fit ' + todo.join(', ') + ' — fit it in on the day asked, at a time it is open; it may replace another place or be the evening, with dinner there)'), $('p-send'));
 }
 
 /* "Not happy with it?": understood here when it can be (pace, food, kinds of places, times, a meeting, a free evening),
