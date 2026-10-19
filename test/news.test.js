@@ -33,7 +33,8 @@ function load(opts){
     fetch: async (url)=>{
       calls.gdelt++;
       if(opts.gdelt === 'busy') return {text: async ()=>'Please limit requests to one every 5 seconds'};
-      return {text: async ()=>JSON.stringify({articles: [{title: 'GDELT story about Dubai ' + calls.gdelt, url: 'https://g.example/' + calls.gdelt, domain: 'g.example', seendate: '20261018T100000Z'}]})};
+      return {text: async ()=>JSON.stringify({articles: [{title: 'GDELT story about Dubai ' + calls.gdelt, url: 'https://g.example/' + calls.gdelt, domain: 'g.example', seendate: '20261018T100000Z'},
+        {title: 'US ambassador to Israel condemns attack on journalist', url: 'https://g.example/il' + calls.gdelt, domain: 'g.example', seendate: '20261018T100000Z'}]})};
     },
     Cloud: {chat: async (system, turns, o)=>{ calls.chat.push({system, msg: turns[0].content, o}); return {text: '{"status":"caution","headline":"h","points":["p"],"flights":"f","advice":"a"}', provider: 'Your own AI', model: 'auto', sources: []}; },
       json: t=>JSON.parse(t)},
@@ -68,6 +69,8 @@ test('the Mac out of reach: GDELT fills the columns', async ()=>{
   assert.ok(h.city.length && h.security.length && h.travel.length);
   assert.deepEqual(h.errors, []);
   assert.deepEqual(h.from, ['GDELT (worldwide news)']);
+  // live, GDELT put Israel's news in Dubai's Safety column: a story must name the place
+  ['city', 'security', 'travel'].forEach(k=>assert.ok(!h[k].some(a=>/Israel/.test(a.title)), k + ': ' + h[k].map(a=>a.title)));
 });
 
 test('both out: every column says why', async ()=>{

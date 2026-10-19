@@ -474,7 +474,9 @@ const News = (function(){
         try{ g = await gdelt(j.gq, j.span, 25); }catch(e){ gErr = e.message; }
       }
       if(g && out.from.indexOf('GDELT (worldwide news)') < 0) out.from.push('GDELT (worldwide news)');
-      out[j.k] = merge(relevant(web[i].list, j.words, j.days), relevant(g, [], j.days));
+      // GDELT too must name the place (headline, text or address): it matches words anywhere in a story, and
+      // "Dubai OR United Arab Emirates + attack" brought "US ambassador to Israel condemns attack…" to Dubai's Safety
+      out[j.k] = merge(relevant(web[i].list, j.words, j.days), relevant(g, j.words, j.days));
       if(!web[i].list && !g) out.errors.push(j.label + ': ' + ([web[i].error, gErr].filter(Boolean).join('; ') || 'no answer'));
     }
     return out;
