@@ -117,3 +117,37 @@ test('what the planner cannot do is reported, so the AI is asked (not "nothing c
   assert.deepEqual(TripBrain.forAI({placed: ['The Dubai Mall'], unplaced: [], notFound: []}, 3), []);
   assert.deepEqual(TripBrain.forAI({placed: [], unplaced: [], notFound: ['Ski Dubai']}, 2), ['Ski Dubai']);
 });
+
+/* The AI's answer, as it reached the plan. "I am thinking to cover bruj khalifa and dubai mall and fountain show on
+   day 1" went on to the AI, whose answer had no readable days: the locked landing flight made one day, the rest came
+   from the empty skeleton, and the whole plan was wiped (only "Land in Dubai" and open blocks were left). */
+test('an AI answer with no readable days never replaces the plan', {skip}, ()=>{
+  const before = TripBrain.plan(ctx, know, {}, null).days;
+  const prev = {days: before.map(d=>Object.assign({}, d, {items: d.items.map(i=>/Land in|6E14/.test(i.title) ? Object.assign({}, i, {locked: true}) : i)}))};
+  const sk = Rules.skeleton(ctx, ctx.rules).days;
+  assert.equal(Rules.fromAI({summary: 'Moved them to day 1'}, prev, sk).days, null);
+  assert.equal(Rules.fromAI({days: [{date: '23 Dec', items: []}]}, prev, sk).days, null);
+  assert.equal(Rules.fromAI(null, prev, sk).days, null);
+});
+
+test('a day the AI leaves out keeps the day you had; other answer shapes are read', {skip}, ()=>{
+  const before = TripBrain.plan(ctx, know, {}, null).days;
+  const prev = {days: before};
+  const sk = Rules.skeleton(ctx, ctx.rules).days;
+  const day1 = {date: '2026-12-23', items: [{start: '13:00', end: '15:00', title: 'Burj Khalifa', kind: 'sight'}, {start: '15:30', end: '17:30', title: 'The Dubai Mall', kind: 'shopping'}, {start: '19:00', end: '19:30', title: 'The Dubai Fountain', kind: 'sight'}]};
+  for(const answer of [{days: [day1]}, {plan: {days: [day1]}}, {itinerary: [day1]}, [day1], {days: [Object.assign({}, day1, {date: '2026-12-23T00:00:00'})]}, {days: [Object.assign({}, day1, {date: undefined, day: 1})]}]){
+    const g = Rules.fromAI(answer, prev, sk);
+    assert.equal(g.given, 1, JSON.stringify(answer).slice(0, 60));
+    assert.deepEqual(g.days[0].items.map(i=>i.title).filter(t=>!/6E14/.test(t)), ['Burj Khalifa', 'The Dubai Mall', 'The Dubai Fountain']);   // and the locked landing flight
+    // days 2-6: the plan you had, not "Morning — open"
+    g.days.slice(1).forEach((d, i)=>assert.deepEqual(d.items.map(x=>x.title), before[i + 1].items.map(x=>x.title)));
+  }
+});
+
+test('a change that removes most places is refused unless you asked for less', ()=>{
+  const day = (date, n) => ({date, items: Array.from({length: n}, (_, i)=>({title: 'P' + i, kind: 'sight'}))});
+  const full = [day('2026-12-23', 2), day('2026-12-24', 3), day('2026-12-25', 3)], empty = [day('2026-12-23', 0), day('2026-12-24', 0), day('2026-12-25', 0)];
+  assert.equal(Rules.wipes(full, empty, 'I am thinking to cover bruj khalifa and dubai mall and fountain show on day 1'), true);
+  assert.equal(Rules.wipes(full, empty, 'clear everything, we want free days'), false);
+  assert.equal(Rules.wipes(full, [day('2026-12-23', 3), day('2026-12-24', 2), day('2026-12-25', 2)], 'Dubai Mall on day 1'), false);
+});

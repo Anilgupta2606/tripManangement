@@ -268,6 +268,36 @@ const Rules = (function(){
     return {days};
   }
 
+  /* The AI's answer as the plan's days. Before, an answer with no readable days still "worked": the locked landing
+     flight made one day, every other day was rebuilt from the empty skeleton, and the plan was wiped ("cover burj
+     khalifa … on day 1" left only the flight). Now: the days are found in the usual shapes ({days}, {plan: {days}},
+     {itinerary: […]}, a bare list; "2026-12-23T…" or {"day": 2}), an answer with none gives null (the plan is kept),
+     and a day the AI left out keeps the day you had, not the skeleton.  -> {days|null, given: number of days answered} */
+  function fromAI(raw, previous, skeletonDays){
+    const sk = skeletonDays || [];
+    const pick = x => Array.isArray(x) ? x : x && typeof x === 'object' ? (Array.isArray(x.days) ? x.days : null) : null;
+    const list = pick(raw) || pick(raw && raw.plan) || pick(raw && raw.itinerary) || pick(raw && raw.data) || [];
+    const days = list.filter(d=>d && typeof d === 'object').map(d=>{
+      let date = String(d.date || '').slice(0, 10);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){ const n = parseInt(String(d.day || d.date || '').replace(/\D+/g, ''), 10); date = n && sk[n - 1] ? sk[n - 1].date : ''; }
+      return Object.assign({}, d, {date});
+    }).filter(d=>d.date && (!sk.length || sk.some(x=>x.date === d.date)));
+    const answered = new Set(days.map(d=>d.date));
+    if(!answered.size) return {days: null, given: 0};
+    const cl = clean({days}, previous);
+    const prevDay = date => previous && previous.days ? previous.days.find(d=>d.date === date) : null;
+    const out = (sk.length ? sk : cl.days).map(d=>(answered.has(d.date) && cl.days.find(x=>x.date === d.date)) || prevDay(d.date) || cl.days.find(x=>x.date === d.date) || d);
+    return {days: out, given: answered.size};
+  }
+  /* How many places (sights, activities, shopping) a plan has: a change that takes most of them away, when you did
+     not ask for less, is refused - the plan you had stays. */
+  const placesIn = days => (days || []).reduce((n, d)=>n + (d.items || []).filter(i=>['sight', 'activity', 'shopping'].indexOf(i.kind) >= 0).length, 0);
+  function wipes(beforeDays, afterDays, request){
+    const a = placesIn(beforeDays), b = placesIn(afterDays);
+    if(a < 3 || b * 2 >= a) return false;
+    return !/\b(fewer|less|lighter|relax|relaxed|remove|delete|drop|cancel|empty|clear|skip|rest|free|nothing|start again|from scratch)\b/i.test(request || '');
+  }
+
   /* ---------------------------------------------------------------- the fixer (no AI)
      Moves whatever breaks a time rule to the first time that is allowed, keeping the order of the day: after landing
      and the transfer, before leaving for the airport, inside the day, never overlapping and with the gap between
@@ -531,6 +561,6 @@ const Rules = (function(){
     return top.concat(loose);
   }
 
-  return {DEFAULTS, KINDS, merge, asPrompt, check, skeleton, clean, repair, fill, windowOf, tripAnchors, toMin, toTime, addDays, daysBetween, DOC_RULES, WHEN, applies, checklist, diffPlans, changesOf, explainPlans};
+  return {DEFAULTS, KINDS, merge, asPrompt, check, skeleton, clean, repair, fill, windowOf, tripAnchors, toMin, toTime, addDays, daysBetween, DOC_RULES, WHEN, applies, checklist, diffPlans, changesOf, explainPlans, fromAI, wipes, placesIn};
 })();
 if(typeof module !== 'undefined') module.exports = Rules;

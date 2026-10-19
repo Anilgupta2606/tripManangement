@@ -346,7 +346,7 @@ async function aiPlan(trip, c, issue, clicked){
     const progress = (t, id) => Busy.step(t + (DEVICE_AI.indexOf(id) >= 0 ? ' — on this device' : id ? ' — usually under a minute' : ''));
     const cw = Object.assign({}, c, {weather: LOCAL_WEATHER[key]});
     const sk = Rules.skeleton({city: c.city, start: c.start, end: c.end, hotel: c.hotel, arrival: c.arrival, departure: c.departure}, c.rules);
-    const fromAnswer = text => { const j = Cloud.json(text), cl = Rules.clean(j, prev); return {j, days: cl.days.length ? sk.days.map(d=>cl.days.find(x=>x.date === d.date) || d) : null}; };
+    const fromAnswer = text => { let j = null; try{ j = Cloud.json(text); }catch(e){} const g = Rules.fromAI(j, prev, sk.days); return {j: j || {}, days: g.days}; };
     const lineup = aiLineup();
     const online = {onProgress: progress}; if(lineup.device) online.skip = DEVICE_AI;     // the long plan is for online AIs only
     let r = null, got = null, small = null;
@@ -362,7 +362,7 @@ async function aiPlan(trip, c, issue, clicked){
           r = await Cloud.chat(system, turns, online, signal);
         }
         got = fromAnswer(r.text);
-        if(!got.days) throw new Error('The AI returned an empty plan. Try again.');
+        if(!got.days) throw new Error('The AI’s answer had no plan in it — your plan is unchanged. Try again.');
       }catch(e){
         if(e.code === 'cancelled' || !lineup.device) throw e;
         say('The online AIs could not answer — the AI on this device picks the places, the app does the timing…');
@@ -393,6 +393,9 @@ async function aiPlan(trip, c, issue, clicked){
       }catch(e){ if(e.code === 'cancelled') throw e; }
     }
     Busy.step('');
+    // a change that would take away most of your places (when you did not ask for less) is not stored: the plan stays
+    if(issue && prev && prev.days && Rules.wipes(prev.days, fixed.days, issue))
+      throw new Error('The AI’s answer would have removed most of your places (' + Rules.placesIn(prev.days) + ' → ' + Rules.placesIn(fixed.days) + ') — your plan is unchanged. Try again, or say it another way.');
     const j = got.j || {};
     storePlan(trip, c, fixed.days, r.provider + ' · ' + r.model + (small ? ' + the app' : ''), issue ? issue : (prev ? 'Re-planned with AI' : 'Planned with AI') + (j.summary ? ': ' + j.summary : ''),
       {sources: (r.sources || []).slice(0, 15).concat(know && know.guide ? [{title: 'Wikivoyage: ' + know.guide.title, url: know.guide.url}] : []), used, fixes: fixed.changes});
@@ -442,6 +445,10 @@ async function brainPlan(trip, c, what){
     const placesIn = res.days.reduce((s, d)=>s + d.items.filter(i=>i.by === 'brain').length, 0);
     if(!placesIn){
       Busy.done('Could not read about ' + c.city + ' just now (the travel guide did not answer)' + (prev ? ' — your plan is unchanged' : '') + '. Try again in a minute' + (Cloud.aiAvailable() ? ', or use Re-plan with AI' : '') + '.', true);
+      return;
+    }
+    if(what && prev && prev.days && Rules.wipes(prev.days, res.days, what)){
+      Busy.done('That change would have removed most of your places — your plan is unchanged. Say it another way, or use Re-plan.', true);
       return;
     }
     storePlan(trip, c, res.days, 'Trip Vault planner (no AI)', what || ((prev ? 'Re-planned' : 'Planned') + ': ' + res.summary),

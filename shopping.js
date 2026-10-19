@@ -32,11 +32,10 @@ VIEWS.shop = function(main, cur){
   S.shopping = S.shopping || [];
   const places = shopPlaces(cur);
   const all = S.shopping.filter(x=>x.tripId === cur.id), done = all.filter(x=>x.done).length;
-  const people = Array.from(new Set(S.people.map(p=>p.name).concat(travellersOf(cur)))).filter(Boolean);
+  const people = shopState.people = Array.from(new Set(S.people.map(p=>p.name).concat(travellersOf(cur)))).filter(Boolean);
   main.innerHTML = `
   <section class="section-head"><div><h1>${esc(cur.name)}</h1><p class="muted small">${all.length ? `${done} of ${all.length} bought` : 'One list for each place: what to buy before you leave, and what to buy there.'}</p></div>
     <div class="row">${all.length ? `<button class="btn ghost" id="sh-copy">Copy as text</button>` : ''}</div></section>
-  <datalist id="sh-people">${people.map(p=>`<option value="${esc(p)}">`).join('')}</datalist>
   <section class="shop-grid">${places.map((p, i)=>shopCard(cur, p, i)).join('')}</section>`;
   places.forEach((p, i)=>bindShopCard(cur, p, i, places));
   if($('sh-copy')) $('sh-copy').onclick = ()=>navigator.clipboard.writeText(shopText(cur, places)).then(()=>toast('Copied — paste it in WhatsApp or Notes.'));
@@ -52,7 +51,7 @@ function shopCard(trip, p, i){
     <form class="shop-add" data-add="${i}">
       <input name="text" placeholder="${p.home ? 'Add an item, e.g. adapter' : 'Add an item, e.g. dates'}" aria-label="Item" autocomplete="off" required>
       <input name="qty" placeholder="Qty" aria-label="How many" class="qty">
-      <input name="who" placeholder="For" aria-label="For whom" list="sh-people" class="who">
+      ${whoPicker(shopState.people || [], [])}
       <button class="btn primary small">${icon('plus')} Add</button>
     </form>
     <ul class="shop-list">${items.map(x=>shopRow(x)).join('') || `<li class="muted small empty">Nothing yet.</li>`}</ul>
@@ -71,6 +70,7 @@ function shopRow(x){
 function bindShopCard(trip, p, i, places){
   const card = document.querySelector(`[data-shop="${i}"]`);
   if(!card) return;
+  bindWhoPicker(card.querySelector('[data-add]'));
   card.querySelector('[data-add]').onsubmit = e=>{
     e.preventDefault();
     const f = e.target, text = f.text.value.trim();
@@ -94,17 +94,51 @@ function editShopItem(x, places){
   const card = openModal(`<h2>Edit</h2><form id="sh-f" class="grid2">
     <label class="span2">What<input id="sh-text" value="${esc(x.text)}" required></label>
     <label>How many<input id="sh-qty" value="${esc(x.qty || '')}"></label>
-    <label>For<input id="sh-who" list="sh-people" value="${esc(x.who || '')}"></label>
+    <label>For${whoPicker(shopState.people || [], whoList(x.who), 'sh-who')}</label>
     <label>Where to buy it<input id="sh-where" list="sh-shops" value="${esc(x.where || '')}" placeholder="Shop, market or mall"><datalist id="sh-shops">${shops.map(s=>`<option value="${esc(s.name)}">`).join('')}</datalist></label>
     <label>Price / budget<input id="sh-price" value="${esc(x.price || '')}" placeholder="e.g. 150 AED"></label>
     <label class="span2">Buy it in<select id="sh-city">${places.map(p=>`<option${p.city === x.city ? ' selected' : ''}>${esc(p.city)}</option>`).join('')}</select></label>
     <div class="row end span2"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn primary">Save</button></div></form>`);
+  bindWhoPicker(card.querySelector('#sh-f'));
   card.querySelector('#sh-f').onsubmit = e=>{
     e.preventDefault();
-    Object.assign(x, {text: $('sh-text').value.trim() || x.text, qty: $('sh-qty').value.trim(), who: $('sh-who').value.trim(), where: $('sh-where').value.trim(), price: $('sh-price').value.trim(), city: $('sh-city').value});
+    Object.assign(x, {text: $('sh-text').value.trim() || x.text, qty: $('sh-qty').value.trim(), who: card.querySelector('[name=who]').value, where: $('sh-where').value.trim(), price: $('sh-price').value.trim(), city: $('sh-city').value});
     touch(x); save(); closeModal(); render();
   };
 }
+/* "For": tick everyone it is for (any number of people), or add a new name - it joins your people (Settings), so
+   it is offered next time and on the other tabs too. Kept as "Anil, Jyoti" in the item, as before. */
+const whoList = w => String(w || '').split(/\s*,\s*/).filter(Boolean);
+function whoPicker(people, chosen, id){
+  const all = Array.from(new Set(people.concat(chosen)));
+  const label = chosen.length ? chosen.join(', ') : 'For';
+  return `<details class="who-pick"${id ? ` id="${id}"` : ''}><summary class="who-sum${chosen.length ? '' : ' muted'}" aria-label="For whom">${esc(label)}</summary>
+    <div class="who-menu">${all.map(n=>`<label class="check"><input type="checkbox" value="${esc(n)}"${chosen.indexOf(n) >= 0 ? ' checked' : ''}> ${esc(n)}</label>`).join('') || '<p class="muted small">No one yet — add a name.</p>'}
+      <div class="who-new"><input type="text" placeholder="Add a name" aria-label="New name" autocomplete="off"><button type="button" class="btn soft small">Add</button></div></div>
+    <input type="hidden" name="who" value="${esc(chosen.join(', '))}"></details>`;
+}
+function bindWhoPicker(form){
+  const box = form && form.querySelector('.who-pick');
+  if(!box) return;
+  const menu = box.querySelector('.who-menu'), hidden = box.querySelector('[name=who]'), sum = box.querySelector('.who-sum');
+  const sync = () => { const v = Array.from(menu.querySelectorAll('input[type=checkbox]:checked')).map(c=>c.value);
+    hidden.value = v.join(', '); sum.textContent = v.length ? v.join(', ') : 'For'; sum.classList.toggle('muted', !v.length); };
+  menu.addEventListener('change', sync);
+  const inp = box.querySelector('.who-new input'), add = () => {
+    const name = Parse.titleCase(inp.value.trim());
+    if(!name) return inp.focus();
+    addPerson(name); save({quiet: true});
+    if(!shopState.people.some(n=>n.toLowerCase() === name.toLowerCase())) shopState.people.push(name);
+    let cb = Array.from(menu.querySelectorAll('input[type=checkbox]')).find(c=>c.value.toLowerCase() === name.toLowerCase());
+    if(!cb){ const l = document.createElement('label'); l.className = 'check'; l.innerHTML = `<input type="checkbox" value="${esc(name)}"> ${esc(name)}`; menu.insertBefore(l, box.querySelector('.who-new')); const empty = menu.querySelector('p.muted'); if(empty) empty.remove(); cb = l.querySelector('input'); }
+    cb.checked = true; inp.value = ''; sync(); inp.focus();
+  };
+  box.querySelector('.who-new button').onclick = add;
+  inp.onkeydown = e=>{ if(e.key === 'Enter'){ e.preventDefault(); add(); } };          // Enter adds the name, not the item
+  if(!bindWhoPicker.once){ bindWhoPicker.once = true;                                // one listener: a click elsewhere closes it
+    document.addEventListener('click', e=>document.querySelectorAll('.who-pick[open]').forEach(b=>{ if(!b.contains(e.target)) b.open = false; })); }
+}
+
 /* The city guide's shopping places (markets, malls, souks) - from the internet, no AI. */
 async function loadShopGuide(p){
   const k = p.city.toLowerCase();

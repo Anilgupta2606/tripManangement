@@ -528,6 +528,16 @@ fieldset.types p{ flex-basis: 100%; margin: 0; }
 .shop-head p{ margin: 2px 0 0; }
 .shop-add{ display: grid; grid-template-columns: 1fr 64px 110px auto; gap: 6px; margin: 12px 0 6px; }
 .shop-add input{ min-width: 0; }
+.who-pick{ position: relative; min-width: 0; }
+.who-sum{ list-style: none; cursor: pointer; height: 100%; min-height: 38px; display: flex; align-items: center; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.who-sum::-webkit-details-marker{ display: none; }
+.who-sum::after{ content: '▾'; margin-left: auto; padding-left: 6px; opacity: .6; }
+.who-menu{ position: absolute; z-index: 30; top: calc(100% + 4px); right: 0; min-width: 220px; max-height: 300px; overflow: auto; overscroll-behavior: contain; padding: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 8px 24px rgba(0,0,0,.15); display: grid; gap: 4px; }
+.who-menu .check{ display: flex; gap: 8px; align-items: center; padding: 6px 4px; }
+.who-new{ display: flex; gap: 6px; border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px; }
+.who-new input{ flex: 1; min-width: 0; }
+.modal .who-pick{ display: block; margin-top: 4px; }
+.modal .who-menu{ left: 0; right: auto; }
 .shop-list{ list-style: none; margin: 0; padding: 0; }
 .shop-item{ display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 8px; padding: 9px 0; border-top: 1px solid var(--border); }
 label.tick{ display: flex; flex-direction: row; align-items: center; gap: 10px; font-size: 15px; font-weight: 500; color: var(--ink); cursor: pointer; min-width: 0; }
@@ -543,7 +553,7 @@ label.tick span{ overflow-wrap: anywhere; }
 @media (max-width: 640px){
   .shop-grid{ grid-template-columns: 1fr; }
   .shop-add{ grid-template-columns: 1fr 56px; }
-  .shop-add .who{ grid-column: 1; }
+  .shop-add .who-pick{ grid-column: 1; }
 }
 
 /* the way back to Money Home (the start page of all the apps) */
