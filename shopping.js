@@ -34,13 +34,40 @@ VIEWS.shop = function(main, cur){
   const all = S.shopping.filter(x=>x.tripId === cur.id), done = all.filter(x=>x.done).length;
   const people = shopState.people = Array.from(new Set(S.people.map(p=>p.name).concat(travellersOf(cur)))).filter(Boolean);
   main.innerHTML = `
-  <section class="section-head"><div><h1>${esc(cur.name)}</h1><p class="muted small">${all.length ? `${done} of ${all.length} bought` : 'One list for each place: what to buy before you leave, and what to buy there.'}</p></div>
+  <section class="section-head"><div><h1>${esc(cur.name)}</h1><p class="muted small">${all.length ? `${done} of ${all.length} bought<span id="sh-spent"></span>` : 'One list for each place: what to buy before you leave, and what to buy there.'}</p></div>
     <div class="row">${all.length ? `<button class="btn ghost" id="sh-copy">Copy as text</button>` : ''}</div></section>
   <section class="shop-grid">${places.map((p, i)=>shopCard(cur, p, i)).join('')}</section>`;
   places.forEach((p, i)=>bindShopCard(cur, p, i, places));
   if($('sh-copy')) $('sh-copy').onclick = ()=>navigator.clipboard.writeText(shopText(cur, places)).then(()=>toast('Copied — paste it in WhatsApp or Notes.'));
   places.filter(p=>!p.home).forEach(p=>loadShopGuide(p));
+  fillFx(main, all);
 };
+
+/* A price in another currency, in rupees at the rate of the day it was bought (today's while not bought yet):
+   FX (fx.js) asks Frankfurter, else exchange-api, and keeps the rates in this browser. */
+const fxDay = x => FX.iso(x.done && x.boughtAt ? x.boughtAt : Date.now());
+function fxTag(x){
+  const m = typeof FX !== 'undefined' && FX.parse(x.price);
+  if(!m || m.currency === 'INR') return '';
+  return ` <span class="fx" data-fx="${esc(x.id)}" title="In rupees at the rate of ${esc(fxDay(x))}">≈ ₹…</span>`;
+}
+async function fillFx(main, items){
+  if(typeof FX === 'undefined') return;
+  let total = 0, known = 0, priced = 0;
+  await Promise.all(items.filter(x=>x.done && x.price).map(async x=>{
+    const m = FX.parse(x.price); if(!m) return; priced++;
+    try{ const inr = m.currency === 'INR' ? m.amount : (await FX.toINR(m.amount, m.currency, fxDay(x))).inr; total += inr; known++; }catch(e){}
+  }).concat(items.filter(x=>x.price).map(async x=>{
+    const el = main.querySelector(`[data-fx="${CSS.escape(x.id)}"]`), m = FX.parse(x.price);
+    if(!el || !m) return;
+    try{ const r = await FX.toINR(m.amount, m.currency, fxDay(x));
+      el.textContent = '≈ ' + FX.fmtINR(r.inr);
+      el.title = '1 ' + m.currency + ' = ₹' + (+r.rate.toPrecision(4)) + ' on ' + fmtDate(r.date) + ' (' + r.source + (r.stale ? ', the last rate known' : '') + ')';
+    }catch(e){ el.textContent = ''; }
+  })));
+  const sum = main.querySelector('#sh-spent');
+  if(sum && known) sum.textContent = ' · ' + FX.fmtINR(total) + ' spent' + (known < priced ? ' (some prices not converted)' : '');
+}
 
 function shopCard(trip, p, i){
   const items = shopItems(trip, p.city), left = items.filter(x=>!x.done).length;
@@ -63,7 +90,7 @@ function shopCard(trip, p, i){
 function shopRow(x){
   return `<li class="shop-item${x.done ? ' done' : ''}" data-item="${esc(x.id)}">
     <label class="tick"><input type="checkbox" data-done ${x.done ? 'checked' : ''} aria-label="Bought"><span>${esc(x.text)}</span></label>
-    <span class="meta small muted">${[x.qty ? '× ' + esc(x.qty) : '', x.who ? 'for ' + esc(x.who) : '', x.where ? '@ ' + esc(x.where) : '', x.price ? esc(x.price) : ''].filter(Boolean).join(' · ')}</span>
+    <span class="meta small muted">${[x.qty ? '× ' + esc(x.qty) : '', x.who ? 'for ' + esc(x.who) : '', x.where ? '@ ' + esc(x.where) : '', x.price ? esc(x.price) + fxTag(x) : ''].filter(Boolean).join(' · ')}</span>
     <span class="acts"><button class="icon-btn small" data-edit aria-label="Edit">${icon('edit')}</button><button class="icon-btn small" data-del aria-label="Remove">${icon('trash')}</button></span>
   </li>`;
 }
@@ -96,7 +123,7 @@ function editShopItem(x, places){
     <label>How many<input id="sh-qty" value="${esc(x.qty || '')}"></label>
     <label>For${whoPicker(shopState.people || [], whoList(x.who), 'sh-who')}</label>
     <label>Where to buy it<input id="sh-where" list="sh-shops" value="${esc(x.where || '')}" placeholder="Shop, market or mall"><datalist id="sh-shops">${shops.map(s=>`<option value="${esc(s.name)}">`).join('')}</datalist></label>
-    <label>Price / budget<input id="sh-price" value="${esc(x.price || '')}" placeholder="e.g. 150 AED"></label>
+    <label>Price / budget<input id="sh-price" value="${esc(x.price || '')}" placeholder="e.g. 150 AED — shown in ₹ too"></label>
     <label class="span2">Buy it in<select id="sh-city">${places.map(p=>`<option${p.city === x.city ? ' selected' : ''}>${esc(p.city)}</option>`).join('')}</select></label>
     <div class="row end span2"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn primary">Save</button></div></form>`);
   bindWhoPicker(card.querySelector('#sh-f'));

@@ -545,6 +545,7 @@ label.tick input{ width: 20px; height: 20px; min-height: 0; padding: 0; margin: 
 label.tick span{ overflow-wrap: anywhere; }
 .shop-item .meta{ grid-column: 1; padding-left: 30px; }
 .shop-item .meta:empty{ display: none; }
+.shop-item .fx{ color: var(--accent); font-weight: 600; white-space: nowrap; }
 .shop-item .acts{ grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 2px; }
 .shop-item.done .tick span{ text-decoration: line-through; color: var(--muted); }
 .shop-list .empty{ padding: 8px 0; }

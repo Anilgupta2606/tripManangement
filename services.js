@@ -178,15 +178,21 @@ const Reader = (function(){
       if(opts.password) out.password = opts.password;
     } else if(/^image\//.test(mime)){
       say('Opening the picture…');
-      const full = await imageCanvas(file, 2400);
-      // keep a reasonable copy, not the 8 MB original
-      if(file.size > 1500000 || /heic|heif/i.test(mime)){
+      let full = await imageCanvas(file, 2400), photo = null;
+      // a photo just taken of a paper: its edges found and the page straightened (the photo as it was if that fails)
+      if(opts.straighten && typeof Scan !== 'undefined'){
+        say('Straightening the page…');
+        const flat = await Scan.straighten(full);
+        if(flat){ photo = full; full = flat; out.method.push('straightened'); }
+      }
+      // keep a reasonable copy, not the 8 MB original (and the straightened page, not the photo)
+      if(photo || file.size > 1500000 || /heic|heif/i.test(mime)){
         const b = await canvasBlob(full, 'image/jpeg', 0.85);
         bytes = new Uint8Array(await b.arrayBuffer()); mime = 'image/jpeg'; out.mime = mime;
       }
       out.thumb = await thumb(full);
       say('Looking for a barcode…');
-      out.barcode = await barcode(full);
+      out.barcode = await barcode(full) || (photo ? await barcode(photo) : '');
       if(out.barcode) out.method.push('barcode');
       if(!opts.noOcr){ out.text = await ocr(full, n=>say('Reading the picture ' + n + '%')); out.method.push('OCR'); }
       out.pictures = [{mime: 'image/jpeg', b64: await canvasB64(full, 1800)}];

@@ -213,7 +213,7 @@ VIEWS.docs = function(main, cur){
   $('pick').onclick = ()=>$('file-in').click();
   $('cam').onclick = ()=>$('cam-in').click();
   $('file-in').onchange = e=>{ addFiles(Array.from(e.target.files)); e.target.value = ''; };
-  $('cam-in').onchange = e=>{ addFiles(Array.from(e.target.files)); e.target.value = ''; };
+  $('cam-in').onchange = e=>{ addFiles(Array.from(e.target.files), {straighten: true}); e.target.value = ''; };
   const drop = $('drop');
   ['dragenter', 'dragover'].forEach(ev=>drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.add('over'); }));
   ['dragleave', 'drop'].forEach(ev=>drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.remove('over'); }));
@@ -247,10 +247,10 @@ function docCard(d){
 
 /* ---------------------------------------------------------------- upload queue: read -> review -> save */
 const queue = [];
-function addFiles(files){
+function addFiles(files, o){
   files.forEach(f=>{
     if(f.size > 40 * 1048576){ toast(f.name + ' is over 40 MB — too large.', 'error'); return; }
-    queue.push({id: uid('q'), file: f, state: 'waiting', msg: 'Waiting…'});
+    queue.push({id: uid('q'), file: f, state: 'waiting', msg: 'Waiting…', straighten: !!(o && o.straighten)});
   });
   drawQueue(); runQueue();
 }
@@ -264,7 +264,7 @@ async function runQueue(){
       q.state = 'reading'; drawQueue();
       const say = m=>{ q.msg = m; drawQueueItem(q); };
       try{
-        q.read = await Reader.readFile(q.file, {progress: say, askPassword: async wrong=>{
+        q.read = await Reader.readFile(q.file, {progress: say, straighten: q.straighten, askPassword: async wrong=>{
           const p = await ask(wrong ? 'Wrong password — try again' : 'This PDF is protected', 'Password for ' + q.file.name, {password: true, note: 'Tickets are often protected with your date of birth, PNR, or part of your name. Nothing is sent anywhere.'});
           if(p !== null) q.password = p;
           return p;
