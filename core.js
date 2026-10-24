@@ -35,6 +35,7 @@ function toast(msg, kind){
 function icon(name){
   const P = {
     bag: '<path d="M5 8h14l-1 13H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>',
+    food: '<path d="M7 3v8a2 2 0 0 0 2 2v8M5 3v5M9 3v5M17 21V3c-2 1-3 3-3 6v4h3"/>',
     plane: '<path d="M2 16l20-8-20-8 4 8-4 8z" transform="rotate(-30 12 8) translate(0 4)"/>',
     doc: '<path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/>',
     map: '<path d="M9 3L3 6v15l6-3 6 3 6-3V3l-6 3z"/><path d="M9 3v15M15 6v15"/>',
@@ -91,7 +92,7 @@ const Store = (function(){
   };
 })();
 
-const EMPTY = () => ({v: 1, people: [], trips: [], docs: [], plans: {}, memories: [], flightsExtra: [], shopping: [], deleted: {}, checks: {},
+const EMPTY = () => ({v: 1, people: [], trips: [], docs: [], plans: {}, memories: [], flightsExtra: [], shopping: [], food: [], deleted: {}, checks: {},
   settings: {readerMode: 'builtin-ai', flightKeys: {}, rules: {}, lastTrip: ''}});
 let S = EMPTY();
 /* What syncs (everything but this device's keys and caches). */
@@ -123,7 +124,7 @@ function remove(listName, id){
 function mergeData(mine, theirs){
   const out = JSON.parse(JSON.stringify(mine));
   out.deleted = Object.assign({}, theirs.deleted || {}, mine.deleted || {});
-  ['people', 'trips', 'docs', 'memories', 'flightsExtra', 'shopping'].forEach(k=>{
+  ['people', 'trips', 'docs', 'memories', 'flightsExtra', 'shopping', 'food'].forEach(k=>{
     const by = {};
     (theirs[k] || []).concat(mine[k] || []).forEach(x=>{ if(!by[x.id] || (x.updatedAt || 0) >= (by[x.id].updatedAt || 0)) by[x.id] = x; });
     out[k] = Object.values(by).filter(x=>!out.deleted[x.id] || (x.updatedAt || 0) > out.deleted[x.id]);
@@ -346,6 +347,7 @@ const TABS = [
   {id: 'news', label: 'News', icon: 'news'},
   {id: 'flights', label: 'Flights', icon: 'plane'},
   {id: 'shop', label: 'Shopping', icon: 'bag'},
+  {id: 'food', label: 'Food to try', icon: 'food'},
   {id: 'memories', label: 'Memories', icon: 'photo'},
 ];
 const VIEWS = {};

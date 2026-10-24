@@ -528,6 +528,13 @@ fieldset.types p{ flex-basis: 100%; margin: 0; }
 .shop-head p{ margin: 2px 0 0; }
 .shop-add{ display: grid; grid-template-columns: 1fr 64px 110px auto; gap: 6px; margin: 12px 0 6px; }
 .shop-add input{ min-width: 0; }
+.food-add{ display: grid; grid-template-columns: 150px 1fr auto; gap: 6px; margin: 12px 0 6px; }
+.food-add input, .food-add select{ min-width: 0; }
+.food-add input[name=place]{ grid-column: 2; }
+.food-add input[name=place]:not([hidden]) ~ button{ grid-row: 1; grid-column: 3; }
+.food-kind{ font-weight: 600; }
+.food-kind.restaurant{ color: var(--accent); }
+@media (max-width: 520px){ .food-add{ grid-template-columns: 1fr auto; } .food-add select{ grid-column: 1 / -1; } .food-add input[name=place]{ grid-column: 1; } }
 .who-pick{ position: relative; min-width: 0; }
 .who-sum{ list-style: none; cursor: pointer; height: 100%; min-height: 38px; display: flex; align-items: center; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .who-sum::-webkit-details-marker{ display: none; }
